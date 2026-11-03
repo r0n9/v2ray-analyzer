@@ -61,6 +61,11 @@ WEB_PORT="${USER_PORT:-$DEFAULT_PORT}"
 
 # 创建持久化存储目录并赋予完全读写权限，避免 SQLite 容器挂载 I/O 报错
 mkdir -p data
+# 如果此前启动失败残留了损坏的空数据库文件，自动清理避免 SQLite 锁死
+if [ -f "data/v2ray_stats.db" ] && [ ! -s "data/v2ray_stats.db" ]; then
+    echo "提示: 检测到此前启动失败残留的 0 字节数据库文件，已自动清理..."
+    rm -f data/v2ray_stats.db*
+fi
 chmod -R 777 data 2>/dev/null || true
 
 # 生成 .env 文件供 docker compose 读取

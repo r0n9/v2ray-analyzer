@@ -18,36 +18,45 @@ class GeoResolver:
     def __init__(self, db_path: str):
         self.db_path = os.path.abspath(db_path)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.uri = f"file:{self.db_path}?nolock=1"
         self._lock = threading.Lock()
         self._init_table()
 
     def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.uri, uri=True, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA journal_mode = DELETE")
+        except Exception:
+            pass
         return conn
 
     def _init_table(self):
-        with self._get_connection() as conn:
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS ip_geo_cache (
-                ip TEXT PRIMARY KEY,
-                country TEXT DEFAULT '',
-                region TEXT DEFAULT '',
-                city TEXT DEFAULT '',
-                isp TEXT DEFAULT '',
-                display_location TEXT DEFAULT '',
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """)
-            conn.execute("""
-            CREATE TABLE IF NOT EXISTS client_aliases (
-                ip TEXT PRIMARY KEY,
-                alias TEXT DEFAULT '',
-                note TEXT DEFAULT '',
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """)
-            conn.commit()
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS ip_geo_cache (
+                    ip TEXT PRIMARY KEY,
+                    country TEXT DEFAULT '',
+                    region TEXT DEFAULT '',
+                    city TEXT DEFAULT '',
+                    isp TEXT DEFAULT '',
+                    display_location TEXT DEFAULT '',
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS client_aliases (
+                    ip TEXT PRIMARY KEY,
+                    alias TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                conn.commit()
+            finally:
+                conn.close()
 
     @staticmethod
     def is_private_ip(ip: str) -> bool:

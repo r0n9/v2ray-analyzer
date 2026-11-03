@@ -1,6 +1,7 @@
 import logging
 import os
 import sqlite3
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("v2ray_analyzer.database")
@@ -10,34 +11,35 @@ class Database:
         self.db_path = os.path.abspath(db_path)
         # Ensure parent directory exists (e.g. /data in Docker)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._journal_mode = None
-        self._init_db()
 
-    def get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        conn.row_factory = sqlite3.Row
-
-        # Try WAL mode, fallback to TRUNCATE/DELETE on Docker volume / network filesystems
-        if self._journal_mode is None:
+        # Clean up corrupted 0-byte file if left behind from previous startup failure
+        if os.path.exists(self.db_path) and os.path.getsize(self.db_path) == 0:
             try:
-                cursor = conn.execute("PRAGMA journal_mode = WAL")
-                mode = cursor.fetchone()[0].upper()
-                self._journal_mode = mode if mode == "WAL" else "TRUNCATE"
-            except Exception as e:
-                logger.warning(f"WAL mode unsupported on this filesystem ({e}), falling back to TRUNCATE mode.")
-                try:
-                    conn.execute("PRAGMA journal_mode = TRUNCATE")
-                    self._journal_mode = "TRUNCATE"
-                except Exception:
-                    self._journal_mode = "DELETE"
-        elif self._journal_mode != "WAL":
-            try:
-                conn.execute(f"PRAGMA journal_mode = {self._journal_mode}")
+                os.remove(self.db_path)
             except Exception:
                 pass
 
+        self._lock = threading.Lock()
+        # Use nolock=1 to prevent POSIX fcntl lock errors on Docker bind mounts / PVE / VirtioFS
+        self.uri = f"file:{self.db_path}?nolock=1"
+        self._init_db()
+
+    def get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.uri, uri=True, timeout=60.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+
         try:
-            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA journal_mode = DELETE")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("PRAGMA synchronous = OFF")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("PRAGMA temp_store = MEMORY")
         except Exception:
             pass
 
@@ -49,36 +51,40 @@ class Database:
         return conn
 
     def _init_db(self):
-        with self.get_connection() as conn:
-            conn.executescript("""
-            CREATE TABLE IF NOT EXISTS access_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                date TEXT NOT NULL,
-                hour INTEGER NOT NULL,
-                client_ip TEXT NOT NULL,
-                client_port INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'accepted',
-                network TEXT DEFAULT 'tcp',
-                target_host TEXT NOT NULL,
-                target_port INTEGER NOT NULL,
-                outbound_tag TEXT DEFAULT ''
-            );
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.executescript("""
+                CREATE TABLE IF NOT EXISTS access_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    hour INTEGER NOT NULL,
+                    client_ip TEXT NOT NULL,
+                    client_port INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'accepted',
+                    network TEXT DEFAULT 'tcp',
+                    target_host TEXT NOT NULL,
+                    target_port INTEGER NOT NULL,
+                    outbound_tag TEXT DEFAULT ''
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_logs_date_time ON access_logs (date, timestamp);
-            CREATE INDEX IF NOT EXISTS idx_logs_client_ip ON access_logs (client_ip, date);
-            CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host);
-            CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour);
+                CREATE INDEX IF NOT EXISTS idx_logs_date_time ON access_logs (date, timestamp);
+                CREATE INDEX IF NOT EXISTS idx_logs_client_ip ON access_logs (client_ip, date);
+                CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host);
+                CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour);
 
-            CREATE TABLE IF NOT EXISTS processed_files (
-                filename TEXT PRIMARY KEY,
-                last_offset INTEGER DEFAULT 0,
-                last_mtime REAL DEFAULT 0,
-                total_lines INTEGER DEFAULT 0,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
-            conn.commit()
+                CREATE TABLE IF NOT EXISTS processed_files (
+                    filename TEXT PRIMARY KEY,
+                    last_offset INTEGER DEFAULT 0,
+                    last_mtime REAL DEFAULT 0,
+                    total_lines INTEGER DEFAULT 0,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                conn.commit()
+            finally:
+                conn.close()
 
     def insert_logs_batch(self, logs: List[Dict[str, Any]]) -> int:
         if not logs:
@@ -98,32 +104,43 @@ class Database:
             )
             for item in logs
         ]
-        with self.get_connection() as conn:
-            conn.executemany("""
-            INSERT INTO access_logs (
-                timestamp, date, hour, client_ip, client_port,
-                status, network, target_host, target_port, outbound_tag
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, data)
-            conn.commit()
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.executemany("""
+                INSERT INTO access_logs (
+                    timestamp, date, hour, client_ip, client_port,
+                    status, network, target_host, target_port, outbound_tag
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, data)
+                conn.commit()
+            finally:
+                conn.close()
         return len(logs)
 
     def get_processed_file(self, filename: str) -> Optional[Dict[str, Any]]:
-        with self.get_connection() as conn:
+        conn = self.get_connection()
+        try:
             row = conn.execute(
                 "SELECT * FROM processed_files WHERE filename = ?", (filename,)
             ).fetchone()
             if row:
                 return dict(row)
-        return None
+            return None
+        finally:
+            conn.close()
 
     def update_processed_file(self, filename: str, offset: int, mtime: float, total_lines: int):
-        with self.get_connection() as conn:
-            conn.execute("""
-            INSERT OR REPLACE INTO processed_files (filename, last_offset, last_mtime, total_lines, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (filename, offset, mtime, total_lines))
-            conn.commit()
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.execute("""
+                INSERT OR REPLACE INTO processed_files (filename, last_offset, last_mtime, total_lines, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (filename, offset, mtime, total_lines))
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_overview_stats(self, date: Optional[str] = None) -> Dict[str, Any]:
         """
