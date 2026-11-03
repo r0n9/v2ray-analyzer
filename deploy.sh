@@ -59,9 +59,9 @@ DEFAULT_PORT="8848"
 read -p "请设置 Web 访问端口 [默认: $DEFAULT_PORT]: " USER_PORT
 WEB_PORT="${USER_PORT:-$DEFAULT_PORT}"
 
-# 创建持久化存储目录
+# 创建持久化存储目录并赋予完全读写权限，避免 SQLite 容器挂载 I/O 报错
 mkdir -p data
-chmod 755 data
+chmod -R 777 data 2>/dev/null || true
 
 # 生成 .env 文件供 docker compose 读取
 cat <<EOF > .env

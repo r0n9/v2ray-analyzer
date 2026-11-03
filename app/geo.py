@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import logging
+import os
 import sqlite3
 import threading
 import urllib.request
@@ -15,7 +16,8 @@ class GeoResolver:
     """
 
     def __init__(self, db_path: str):
-        self.db_path = db_path
+        self.db_path = os.path.abspath(db_path)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._lock = threading.Lock()
         self._init_table()
 

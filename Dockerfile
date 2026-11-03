@@ -12,7 +12,7 @@ COPY static ./static
 COPY config.json ./config.json
 
 # Create default volume directories
-RUN mkdir -p /logs /data
+RUN mkdir -p /logs /data && chmod 777 /data
 
 # Default environment configurations
 ENV PORT=8848 \

@@ -1,4 +1,5 @@
 import logging
+import os
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -6,15 +7,45 @@ logger = logging.getLogger("v2ray_analyzer.database")
 
 class Database:
     def __init__(self, db_path: str):
-        self.db_path = db_path
+        self.db_path = os.path.abspath(db_path)
+        # Ensure parent directory exists (e.g. /data in Docker)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._journal_mode = None
         self._init_db()
 
     def get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+
+        # Try WAL mode, fallback to TRUNCATE/DELETE on Docker volume / network filesystems
+        if self._journal_mode is None:
+            try:
+                cursor = conn.execute("PRAGMA journal_mode = WAL")
+                mode = cursor.fetchone()[0].upper()
+                self._journal_mode = mode if mode == "WAL" else "TRUNCATE"
+            except Exception as e:
+                logger.warning(f"WAL mode unsupported on this filesystem ({e}), falling back to TRUNCATE mode.")
+                try:
+                    conn.execute("PRAGMA journal_mode = TRUNCATE")
+                    self._journal_mode = "TRUNCATE"
+                except Exception:
+                    self._journal_mode = "DELETE"
+        elif self._journal_mode != "WAL":
+            try:
+                conn.execute(f"PRAGMA journal_mode = {self._journal_mode}")
+            except Exception:
+                pass
+
+        try:
+            conn.execute("PRAGMA synchronous = NORMAL")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
+        except Exception:
+            pass
+
         return conn
 
     def _init_db(self):
