@@ -1,0 +1,18 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8848,
+    "auth_enabled": true,
+    "username": "admin",
+    "password": "changeme888"
+  },
+  "logs": {
+    "log_dir": ".",
+    "access_log_path": "./access.log",
+    "scan_interval_seconds": 10,
+    "history_pattern": "*.log"
+  },
+  "database": {
+    "db_path": "./v2ray_stats.db"
+  }
+}
