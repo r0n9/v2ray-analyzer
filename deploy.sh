@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-# 自动检测与请求 root 权限（/var/log 属系统保护目录）
+# 权限检测：如果非 root 且无 docker 权限时才尝试 sudo 提权
 if [ "$EUID" -ne 0 ]; then
-    echo "提示: 检测到当前非 root 用户。由于访问并挂载 /var/log/v2ray/ 需要特权，正在尝试通过 sudo 提升权限..."
-    if command -v sudo &> /dev/null; then
-        exec sudo bash "$0" "$@"
-    else
-        echo "错误: 系统未安装 sudo 且当前非 root 运行。请切换至 root 账户后再执行此脚本！"
-        exit 1
+    if ! docker info &>/dev/null; then
+        echo "提示: 检测到当前非 root 用户且无 Docker 运行权限，正在尝试通过 sudo 提升权限..."
+        if command -v sudo &> /dev/null; then
+            exec sudo bash "$0" "$@"
+        else
+            echo "错误: 系统未安装 sudo 且当前用户无 Docker 运行权限。请将用户加入 docker 用户组或切换至 root 账户后再执行！"
+            exit 1
+        fi
     fi
 fi
 
