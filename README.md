@@ -56,20 +56,21 @@ scp -r /Users/rong/Documents/PVE/v2ray_log user@<your-vps-ip>:/opt/v2ray-analyze
 ```
 
 ### 第二步：运行一键部署脚本
-登录 VPS 终端并执行：
+登录 VPS 终端并执行（推荐使用 `sudo` 执行，脚本亦支持自动提权）：
 ```bash
 cd /opt/v2ray-analyzer
 chmod +x deploy.sh
-./deploy.sh
+sudo ./deploy.sh
 ```
 
-脚本会交互式引导您确认：
-1. **V2Ray 日志路径**：默认是 `/var/log/v2ray`（脚本会自动将该目录挂载为只读）；
+脚本会自动引导您确认：
+1. **V2Ray 日志路径**：默认是 `/var/log/v2ray/`（脚本会自动检查 root 权限，并赋予只读挂载权限）；
 2. **Web 登录密码**：默认 `admin888`（可自定义）；
 3. **Web 访问端口**：默认 `8848`。
 
-> 💡 **已有历史日志导入说明**：
-> 如果您之前通过 `split_logs.sh` 生成的历史 `2026_xx_xx.log` 日志文件，只需放置在 V2Ray 日志目录下，容器启动后会自动扫描并一次性导入数据库！
+> 💡 **Root 权限与已有历史日志导入说明**：
+> 1. **/var/log 权限**：V2Ray 日志通常由 root 生成（部分可能为 600/700 权限），`deploy.sh` 会自动检测并配置读取权限，容器以只读方式挂载，确保安全的同时容器能正常解析。
+> 2. **历史日志继承**：如果您之前通过 `split_logs.sh` 生成的历史 `2026_xx_xx.log` 日志文件，只需放置在 `/var/log/v2ray/` 目录下，容器启动后会自动扫描并一次性导入数据库！
 
 ---
 
