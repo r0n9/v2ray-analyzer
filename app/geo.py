@@ -25,9 +25,8 @@ class GeoResolver:
         conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         for pragma in [
-            "PRAGMA journal_mode = OFF",
-            "PRAGMA synchronous = OFF",
-            "PRAGMA locking_mode = EXCLUSIVE",
+            "PRAGMA journal_mode = WAL",
+            "PRAGMA synchronous = NORMAL",
             "PRAGMA temp_store = MEMORY",
         ]:
             try:

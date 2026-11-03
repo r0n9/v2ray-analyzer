@@ -8,11 +8,12 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-8848}:8848"
+    security_opt:
+      - seccomp:unconfined
     volumes:
       # 将 VPS 上 V2Ray 日志目录挂载到容器内（只读挂载）
       - ${HOST_LOG_DIR:-/var/log/v2ray}:/logs:ro
-      # 使用 Docker named volume 存储数据库（解决 bind mount 上 SQLite 文件锁不兼容的问题）
-      - analyzer-data:/data
+      - ./data:/data
     environment:
       - PORT=8848
       - LOG_DIR=/logs
@@ -20,6 +21,3 @@ services:
       - DB_PATH=/data/v2ray_stats.db
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme888}
-
-volumes:
-  analyzer-data:

@@ -28,14 +28,12 @@ class Database:
         conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
-        # Aggressive pragmas to minimize disk I/O — safe because we have a
-        # single-process writer protected by self._lock and data is re-importable.
+        # Pragmas for optimal performance with concurrent readers
         for pragma in [
-            "PRAGMA journal_mode = OFF",      # No journal file at all
-            "PRAGMA synchronous = OFF",       # No fsync
-            "PRAGMA locking_mode = EXCLUSIVE", # Hold lock, avoid re-acquire
-            "PRAGMA temp_store = MEMORY",     # Temp tables in RAM
-            "PRAGMA cache_size = -64000",     # 64 MB page cache
+            "PRAGMA journal_mode = WAL",
+            "PRAGMA synchronous = NORMAL",
+            "PRAGMA temp_store = MEMORY",
+            "PRAGMA cache_size = -64000",
         ]:
             try:
                 conn.execute(pragma)

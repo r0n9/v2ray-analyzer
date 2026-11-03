@@ -65,12 +65,13 @@ DEFAULT_PORT="${SAVED_PORT:-8848}"
 read -p "请设置 Web 访问端口 [默认: $DEFAULT_PORT]: " USER_PORT
 WEB_PORT="${USER_PORT:-$DEFAULT_PORT}"
 
-# 6. 数据持久化说明（使用 Docker named volume，无需手动创建目录）
-# 旧版 bind mount 数据目录清理（若存在）
-if [ -d "data" ] && [ -f "data/v2ray_stats.db" ] && [ ! -s "data/v2ray_stats.db" ]; then
-    echo "提示: 检测到旧版 bind mount 残留的 0 字节数据库文件，已自动清理..."
+# 6. 持久化数据目录检查与异常修复
+mkdir -p data
+if [ -f "data/v2ray_stats.db" ] && [ ! -s "data/v2ray_stats.db" ]; then
+    echo "提示: 检测到此前启动失败残留的 0 字节数据库文件，已自动清理..."
     rm -f data/v2ray_stats.db*
 fi
+chmod -R 777 data 2>/dev/null || true
 
 # 7. 生成 / 更新 .env 与 docker-compose.yml 文件
 cat <<EOF > .env
@@ -94,11 +95,12 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_PORT}:8848"
+    security_opt:
+      - seccomp:unconfined
     volumes:
       # V2Ray 日志目录（只读挂载）
       - ${LOG_PATH}:/logs:ro
-      # 使用 Docker named volume 存储数据库（解决 PVE/VirtioFS 上 SQLite 文件锁兼容问题）
-      - analyzer-data:/data
+      - ./data:/data
     environment:
       - PORT=8848
       - LOG_DIR=/logs
@@ -106,9 +108,6 @@ services:
       - DB_PATH=/data/v2ray_stats.db
       - ADMIN_USER=admin
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-
-volumes:
-  analyzer-data:
 EOF
 
 # 8. 核心优化：自动检查、停止并删除旧容器，清理旧镜像
@@ -175,7 +174,7 @@ echo "🌐 访问地址: http://${SERVER_IP}:${WEB_PORT}"
 echo "👤 用户名:   admin"
 echo "🔑 密码:     ${ADMIN_PASSWORD}"
 echo "📁 监听日志: ${LOG_PATH}/"
-echo "💾 数据持久化: Docker named volume [analyzer-data]"
+echo "💾 数据持久化: $(pwd)/data"
 echo "============================================="
 echo "日常管理命令："
 echo "  查看运行日志: docker compose logs -f"
