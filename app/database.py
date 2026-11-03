@@ -20,48 +20,38 @@ class Database:
                 pass
 
         self._lock = threading.Lock()
-        # Named volumes support proper POSIX file locking;
-        # keep nolock=1 as fallback safety for edge-case environments
-        self.uri = f"file:{self.db_path}?nolock=1"
         self._init_db()
+        logger.info("Database initialized OK: %s", self.db_path)
 
     def get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.uri, uri=True, timeout=60.0, check_same_thread=False)
+        # Use standard file path (no URI tricks) for maximum compatibility
+        conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
-        # Try WAL mode first (best concurrency), fall back to DELETE (safest)
-        try:
-            result = conn.execute("PRAGMA journal_mode = WAL").fetchone()
-            if result and result[0].lower() != "wal":
-                conn.execute("PRAGMA journal_mode = DELETE")
-        except Exception:
+        # Aggressive pragmas to minimize disk I/O — safe because we have a
+        # single-process writer protected by self._lock and data is re-importable.
+        for pragma in [
+            "PRAGMA journal_mode = OFF",      # No journal file at all
+            "PRAGMA synchronous = OFF",       # No fsync
+            "PRAGMA locking_mode = EXCLUSIVE", # Hold lock, avoid re-acquire
+            "PRAGMA temp_store = MEMORY",     # Temp tables in RAM
+            "PRAGMA cache_size = -64000",     # 64 MB page cache
+        ]:
             try:
-                conn.execute("PRAGMA journal_mode = DELETE")
-            except Exception:
-                pass
-
-        try:
-            conn.execute("PRAGMA synchronous = OFF")
-        except Exception:
-            pass
-
-        try:
-            conn.execute("PRAGMA temp_store = MEMORY")
-        except Exception:
-            pass
-
-        try:
-            conn.execute("PRAGMA cache_size = -64000")  # 64MB cache
-        except Exception:
-            pass
+                conn.execute(pragma)
+            except Exception as e:
+                logger.debug("PRAGMA skipped (%s): %s", pragma, e)
 
         return conn
 
     def _init_db(self):
+        """Create tables using individual execute() calls — avoids executescript()
+        which triggers implicit COMMIT via sqlite3_exec() and can cause disk I/O
+        errors on PVE / restricted-VFS Docker environments."""
         with self._lock:
             conn = self.get_connection()
             try:
-                conn.executescript("""
+                conn.execute("""
                 CREATE TABLE IF NOT EXISTS access_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
@@ -74,20 +64,22 @@ class Database:
                     target_host TEXT NOT NULL,
                     target_port INTEGER NOT NULL,
                     outbound_tag TEXT DEFAULT ''
-                );
+                )
+                """)
 
-                CREATE INDEX IF NOT EXISTS idx_logs_date_time ON access_logs (date, timestamp);
-                CREATE INDEX IF NOT EXISTS idx_logs_client_ip ON access_logs (client_ip, date);
-                CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host);
-                CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour);
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_time ON access_logs (date, timestamp)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_client_ip ON access_logs (client_ip, date)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour)")
 
+                conn.execute("""
                 CREATE TABLE IF NOT EXISTS processed_files (
                     filename TEXT PRIMARY KEY,
                     last_offset INTEGER DEFAULT 0,
                     last_mtime REAL DEFAULT 0,
                     total_lines INTEGER DEFAULT 0,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
+                )
                 """)
                 conn.commit()
             finally:

@@ -18,17 +18,22 @@ class GeoResolver:
     def __init__(self, db_path: str):
         self.db_path = os.path.abspath(db_path)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.uri = f"file:{self.db_path}?nolock=1"
         self._lock = threading.Lock()
         self._init_table()
 
     def _get_connection(self):
-        conn = sqlite3.connect(self.uri, uri=True, timeout=60.0, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA journal_mode = DELETE")
-        except Exception:
-            pass
+        for pragma in [
+            "PRAGMA journal_mode = OFF",
+            "PRAGMA synchronous = OFF",
+            "PRAGMA locking_mode = EXCLUSIVE",
+            "PRAGMA temp_store = MEMORY",
+        ]:
+            try:
+                conn.execute(pragma)
+            except Exception:
+                pass
         return conn
 
     def _init_table(self):
