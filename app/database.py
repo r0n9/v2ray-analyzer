@@ -20,7 +20,8 @@ class Database:
                 pass
 
         self._lock = threading.Lock()
-        # Use nolock=1 to prevent POSIX fcntl lock errors on Docker bind mounts / PVE / VirtioFS
+        # Named volumes support proper POSIX file locking;
+        # keep nolock=1 as fallback safety for edge-case environments
         self.uri = f"file:{self.db_path}?nolock=1"
         self._init_db()
 
@@ -28,10 +29,16 @@ class Database:
         conn = sqlite3.connect(self.uri, uri=True, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
 
+        # Try WAL mode first (best concurrency), fall back to DELETE (safest)
         try:
-            conn.execute("PRAGMA journal_mode = DELETE")
+            result = conn.execute("PRAGMA journal_mode = WAL").fetchone()
+            if result and result[0].lower() != "wal":
+                conn.execute("PRAGMA journal_mode = DELETE")
         except Exception:
-            pass
+            try:
+                conn.execute("PRAGMA journal_mode = DELETE")
+            except Exception:
+                pass
 
         try:
             conn.execute("PRAGMA synchronous = OFF")
