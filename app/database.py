@@ -132,6 +132,7 @@ class Database:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_is_ip ON access_logs (date, is_ip)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_client ON access_logs (date, client_ip)")
 
                 conn.execute("""
                 CREATE TABLE IF NOT EXISTS processed_files (
@@ -379,34 +380,77 @@ class Database:
                           page: int = 1, page_size: int = 50) -> Tuple[List[Dict[str, Any]], int]:
         """
         List client IPs with counts and timestamps — paginated.
-        Returns (rows, total_count).
+        Optimized:
+        - When date is specified, filters using covering index idx_logs_date_client
+          (avoids full-table scan with CASE expression and temp b-tree sorting)
+        - Enriches paged 50 items with lifetime stats using indexed IN query
         """
         conn = self.get_connection()
-
-        if not date:
-            row = conn.execute("SELECT MAX(date) AS max_date FROM access_logs").fetchone()
-            date = row["max_date"] if row and row["max_date"] else ""
-
-        # Total distinct IPs for pagination metadata
-        total = conn.execute(
-            "SELECT COUNT(DISTINCT client_ip) AS cnt FROM access_logs"
-        ).fetchone()["cnt"]
-
         offset = (page - 1) * page_size
-        query = """
-        SELECT
-            client_ip,
-            COUNT(*) AS total_count,
-            SUM(CASE WHEN date = ? THEN 1 ELSE 0 END) AS today_count,
-            MIN(timestamp) AS first_seen,
-            MAX(timestamp) AS last_seen
-        FROM access_logs
-        GROUP BY client_ip
-        ORDER BY today_count DESC, total_count DESC
-        LIMIT ? OFFSET ?
-        """
-        rows = conn.execute(query, (date, page_size, offset)).fetchall()
-        return [dict(r) for r in rows], total
+
+        if date:
+            # 1. Total distinct active IPs on this date (uses covering index)
+            total = conn.execute(
+                "SELECT COUNT(DISTINCT client_ip) AS cnt FROM access_logs WHERE date = ?", (date,)
+            ).fetchone()["cnt"]
+
+            if total == 0:
+                return [], 0
+
+            # 2. Paged active IPs for this date (uses covering index)
+            paged_rows = conn.execute("""
+            SELECT client_ip, COUNT(*) AS today_count
+            FROM access_logs
+            WHERE date = ?
+            GROUP BY client_ip
+            ORDER BY today_count DESC
+            LIMIT ? OFFSET ?
+            """, (date, page_size, offset)).fetchall()
+
+            if not paged_rows:
+                return [], total
+
+            # 3. Enrich only the 50 paged IPs with lifetime stats (uses idx_logs_client_ip)
+            ips = [r["client_ip"] for r in paged_rows]
+            placeholders = ",".join("?" * len(ips))
+            lt_rows = conn.execute(f"""
+            SELECT client_ip, COUNT(*) AS total_count, MIN(timestamp) AS first_seen, MAX(timestamp) AS last_seen
+            FROM access_logs
+            WHERE client_ip IN ({placeholders})
+            GROUP BY client_ip
+            """, ips).fetchall()
+            lt_map = {r["client_ip"]: r for r in lt_rows}
+
+            results = []
+            for r in paged_rows:
+                lt = lt_map.get(r["client_ip"])
+                results.append({
+                    "client_ip": r["client_ip"],
+                    "today_count": r["today_count"],
+                    "total_count": lt["total_count"] if lt else r["today_count"],
+                    "first_seen": lt["first_seen"] if lt else "",
+                    "last_seen": lt["last_seen"] if lt else "",
+                })
+            return results, total
+        else:
+            # When date is not specified, query all-time client IPs
+            total = conn.execute(
+                "SELECT COUNT(DISTINCT client_ip) AS cnt FROM access_logs"
+            ).fetchone()["cnt"]
+
+            rows = conn.execute("""
+            SELECT
+                client_ip,
+                COUNT(*) AS total_count,
+                0 AS today_count,
+                MIN(timestamp) AS first_seen,
+                MAX(timestamp) AS last_seen
+            FROM access_logs
+            GROUP BY client_ip
+            ORDER BY total_count DESC
+            LIMIT ? OFFSET ?
+            """, (page_size, offset)).fetchall()
+            return [dict(r) for r in rows], total
 
     def get_ip_detail(self, client_ip: str, date: Optional[str] = None) -> Dict[str, Any]:
         """
