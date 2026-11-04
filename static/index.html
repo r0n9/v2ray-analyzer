@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>V2Ray 日志分析与可视化监控报表</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -10,7 +10,6 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <!-- ECharts -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <!-- Heroicons / FontAwesome via SVG -->
   <style>
     [v-cloak] { display: none; }
     .glass-card {
@@ -19,8 +18,8 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
     ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
     }
     ::-webkit-scrollbar-track {
       background: #0f172a;
@@ -29,55 +28,83 @@
       background: #334155;
       border-radius: 3px;
     }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .touch-scroll { -webkit-overflow-scrolling: touch; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white">
   <div id="app" v-cloak class="min-h-screen flex flex-col">
     <!-- Header -->
-    <header class="glass-card sticky top-0 z-40 border-b border-slate-800 px-6 py-4">
-      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center space-x-3">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
+    <header class="glass-card sticky top-0 z-40 border-b border-slate-800 px-3 sm:px-6 py-3 sm:py-4">
+      <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+        
+        <!-- Top Row: Logo, Title, Status + Mobile Date/Sync -->
+        <div class="flex items-center justify-between w-full md:w-auto">
+          <div class="flex items-center space-x-2.5 sm:space-x-3">
+            <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
+              <svg class="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <div>
+              <h1 class="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-1.5 sm:gap-2">
+                V2Ray Analyzer
+                <span class="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <span class="w-1.5 h-1.5 mr-1 rounded-full bg-emerald-400 animate-pulse"></span> 实时
+                </span>
+              </h1>
+              <p class="text-[11px] sm:text-xs text-slate-400 hidden sm:block">VPS 访问日志深度画像与报表</p>
+            </div>
           </div>
-          <div>
-            <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              V2Ray Log Analyzer
-              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <span class="w-1.5 h-1.5 mr-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 实时监控中
-              </span>
-            </h1>
-            <p class="text-xs text-slate-400">VPS 访问日志自动化深度分析与画像报表</p>
+
+          <!-- Date Selector & Sync Button (Mobile Header Row) -->
+          <div class="flex items-center space-x-1.5 shrink-0 md:hidden">
+            <select 
+              v-model="selectedDate" 
+              @change="onDateChange"
+              class="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+              <option v-for="d in availableDates" :key="d" :value="d">{{ d }}</option>
+            </select>
+            
+            <button 
+              @click="triggerManualSync" 
+              :disabled="syncing"
+              class="bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 text-xs font-medium p-1.5 rounded-lg transition-all disabled:opacity-50"
+              title="立即同步">
+              <svg :class="{'animate-spin': syncing}" class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <!-- Navigation Tabs & Actions -->
-        <div class="flex items-center space-x-3">
-          <div class="bg-slate-900/80 p-1 rounded-xl border border-slate-800 flex space-x-1">
+        <!-- Navigation Tabs & Desktop Actions -->
+        <div class="flex items-center justify-between gap-2 w-full md:w-auto">
+          <!-- Segmented Control Tabs (Full width on mobile, auto on desktop) -->
+          <div class="bg-slate-900/80 p-1 rounded-xl border border-slate-800 flex space-x-1 w-full md:w-auto overflow-x-auto no-scrollbar">
             <button 
               @click="activeTab = 'overview'" 
               :class="activeTab === 'overview' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all">
+              class="flex-1 md:flex-initial px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap text-center">
               📊 概览大盘
             </button>
             <button 
               @click="activeTab = 'ips'" 
               :class="activeTab === 'ips' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all">
-              👥 客户端 IP 分析
+              class="flex-1 md:flex-initial px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap text-center">
+              👥 客户端 IP
             </button>
             <button 
               @click="activeTab = 'logs'" 
               :class="activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-              class="px-4 py-1.5 rounded-lg text-sm font-medium transition-all">
-              🔍 详细日志检索
+              class="flex-1 md:flex-initial px-3 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap text-center">
+              🔍 日志检索
             </button>
           </div>
 
-          <!-- Date Selector -->
-          <div class="flex items-center space-x-2">
+          <!-- Desktop Date Selector & Sync Button -->
+          <div class="hidden md:flex items-center space-x-2 shrink-0">
             <select 
               v-model="selectedDate" 
               @change="onDateChange"
@@ -100,147 +127,150 @@
     </header>
 
     <!-- Main Content Area -->
-    <main class="max-w-7xl w-full mx-auto p-6 flex-1">
+    <main class="max-w-7xl w-full mx-auto p-3 sm:p-6 flex-1">
       
       <!-- TAB 1: 概览总览 (Overview) -->
-      <div v-show="activeTab === 'overview'" class="space-y-6">
-        <!-- KPI Cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          <div class="glass-card rounded-2xl p-5 relative overflow-hidden">
+      <div v-show="activeTab === 'overview'" class="space-y-4 sm:space-y-6">
+        <!-- KPI Cards: 2x2 grid on mobile, 4 in a row on desktop -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-5">
+          <div class="glass-card rounded-xl sm:rounded-2xl p-3.5 sm:p-5 relative overflow-hidden flex flex-col justify-between">
             <div class="flex justify-between items-start">
-              <div>
-                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">今日总请求量</p>
-                <h3 class="text-3xl font-extrabold text-white mt-2">{{ overview.total_requests ? overview.total_requests.toLocaleString() : 0 }}</h3>
-                <p class="text-xs text-indigo-400 mt-1">当日累计访问记录</p>
+              <div class="min-w-0 pr-1">
+                <p class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider truncate">今日总请求量</p>
+                <h3 class="text-xl sm:text-3xl font-extrabold text-white mt-1 sm:mt-2 truncate">{{ overview.total_requests ? overview.total_requests.toLocaleString() : 0 }}</h3>
+                <p class="text-[10px] sm:text-xs text-indigo-400 mt-0.5 truncate">当日访问累计</p>
               </div>
-              <div class="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+              <div class="p-2 sm:p-3 bg-indigo-500/10 text-indigo-400 rounded-xl border border-indigo-500/20 shrink-0">
+                <svg class="w-4 h-4 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
               </div>
             </div>
           </div>
 
-          <div class="glass-card rounded-2xl p-5 relative overflow-hidden">
+          <div class="glass-card rounded-xl sm:rounded-2xl p-3.5 sm:p-5 relative overflow-hidden flex flex-col justify-between">
             <div class="flex justify-between items-start">
-              <div>
-                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">活跃客户端 IP</p>
-                <h3 class="text-3xl font-extrabold text-cyan-400 mt-2">{{ overview.unique_ips || 0 }}</h3>
-                <p class="text-xs text-cyan-300 mt-1">当日在线活跃客户端</p>
+              <div class="min-w-0 pr-1">
+                <p class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider truncate">活跃客户端</p>
+                <h3 class="text-xl sm:text-3xl font-extrabold text-cyan-400 mt-1 sm:mt-2 truncate">{{ overview.unique_ips || 0 }}</h3>
+                <p class="text-[10px] sm:text-xs text-cyan-300 mt-0.5 truncate">当日在线设备</p>
               </div>
-              <div class="p-3 bg-cyan-500/10 text-cyan-400 rounded-xl border border-cyan-500/20">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+              <div class="p-2 sm:p-3 bg-cyan-500/10 text-cyan-400 rounded-xl border border-cyan-500/20 shrink-0">
+                <svg class="w-4 h-4 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
               </div>
             </div>
           </div>
 
-          <div class="glass-card rounded-2xl p-5 relative overflow-hidden">
+          <div class="glass-card rounded-xl sm:rounded-2xl p-3.5 sm:p-5 relative overflow-hidden flex flex-col justify-between">
             <div class="flex justify-between items-start">
-              <div>
-                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">独立访问目标/域名</p>
-                <h3 class="text-3xl font-extrabold text-emerald-400 mt-2">{{ overview.unique_domains ? overview.unique_domains.toLocaleString() : 0 }}</h3>
-                <p class="text-xs text-emerald-300 mt-1">当日连接的唯一域名/IP</p>
+              <div class="min-w-0 pr-1">
+                <p class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider truncate">独立目标域名</p>
+                <h3 class="text-xl sm:text-3xl font-extrabold text-emerald-400 mt-1 sm:mt-2 truncate">{{ overview.unique_domains ? overview.unique_domains.toLocaleString() : 0 }}</h3>
+                <p class="text-[10px] sm:text-xs text-emerald-300 mt-0.5 truncate">访问域名/IP</p>
               </div>
-              <div class="p-3 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+              <div class="p-2 sm:p-3 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 shrink-0">
+                <svg class="w-4 h-4 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
               </div>
             </div>
           </div>
 
-          <div class="glass-card rounded-2xl p-5 relative overflow-hidden">
+          <div class="glass-card rounded-xl sm:rounded-2xl p-3.5 sm:p-5 relative overflow-hidden flex flex-col justify-between">
             <div class="flex justify-between items-start">
-              <div>
-                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">传输协议分布</p>
-                <h3 class="text-2xl font-bold text-amber-400 mt-2">
+              <div class="min-w-0 pr-1">
+                <p class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider truncate">传输协议分布</p>
+                <h3 class="text-lg sm:text-2xl font-bold text-amber-400 mt-1 sm:mt-2 truncate">
                   TCP {{ overview.protocol_distribution ? overview.protocol_distribution.tcp || 0 : 0 }}
                 </h3>
-                <p class="text-xs text-slate-400 mt-1">UDP {{ overview.protocol_distribution ? overview.protocol_distribution.udp || 0 : 0 }} 次请求</p>
+                <p class="text-[10px] sm:text-xs text-slate-400 mt-0.5 truncate">UDP {{ overview.protocol_distribution ? overview.protocol_distribution.udp || 0 : 0 }} 次</p>
               </div>
-              <div class="p-3 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+              <div class="p-2 sm:p-3 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20 shrink-0">
+                <svg class="w-4 h-4 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               </div>
             </div>
           </div>
         </div>
 
         <!-- 24-Hour Trend Chart -->
-        <div class="glass-card rounded-2xl p-6">
-          <div class="flex items-center justify-between mb-4">
+        <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <div class="flex items-center justify-between mb-3 sm:mb-4">
             <div>
-              <h3 class="text-base font-semibold text-white">24 小时访问流量趋势 ({{ selectedDate }})</h3>
-              <p class="text-xs text-slate-400">展示当天每个整点小时的请求频次与峰谷变化</p>
+              <h3 class="text-sm sm:text-base font-semibold text-white">24 小时流量趋势 ({{ selectedDate }})</h3>
+              <p class="text-[11px] sm:text-xs text-slate-400">整点小时请求频次与峰谷变化</p>
             </div>
           </div>
-          <div id="hourlyChart" class="w-full h-72"></div>
+          <div id="hourlyChart" class="w-full h-56 sm:h-72"></div>
         </div>
 
         <!-- Dual Target Charts: Top Domains & Top Target IPs -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           <!-- Top Domains -->
-          <div class="glass-card rounded-2xl p-6 flex flex-col">
-            <h3 class="text-base font-semibold text-white mb-1 flex items-center gap-2">
+          <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6 flex flex-col">
+            <h3 class="text-sm sm:text-base font-semibold text-white mb-0.5 flex items-center gap-1.5">
               <span>🌐</span> Top 10 热门访问域名
             </h3>
-            <p class="text-xs text-slate-400 mb-4">当日请求频次最高的目标域名服务</p>
-            <div id="domainChart" class="w-full h-72"></div>
+            <p class="text-[11px] sm:text-xs text-slate-400 mb-3 sm:mb-4">当日请求频次最高的目标域名服务</p>
+            <div id="domainChart" class="w-full h-56 sm:h-72"></div>
           </div>
 
           <!-- Top Target IPs -->
-          <div class="glass-card rounded-2xl p-6 flex flex-col">
-            <h3 class="text-base font-semibold text-white mb-1 flex items-center gap-2">
-              <span>🎯</span> Top 10 热门访问目标 IP
+          <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6 flex flex-col">
+            <h3 class="text-sm sm:text-base font-semibold text-white mb-0.5 flex items-center gap-1.5">
+              <span>🎯</span> Top 10 热门目标 IP
             </h3>
-            <p class="text-xs text-slate-400 mb-4">当日直连或通过 IP 直访的目标服务器</p>
-            <div id="targetIpChart" class="w-full h-72"></div>
+            <p class="text-[11px] sm:text-xs text-slate-400 mb-3 sm:mb-4">当日直连的目标服务器</p>
+            <div id="targetIpChart" class="w-full h-56 sm:h-72"></div>
           </div>
         </div>
 
-        <!-- Top Client IPs Quick Table (Full Width) -->
-        <div class="glass-card rounded-2xl p-6">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="text-base font-semibold text-white flex items-center gap-2">
-              <span>👤</span> 当日最活跃客户端 IP
+        <!-- Top Client IPs Quick Table -->
+        <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <div class="flex items-center justify-between mb-1.5">
+            <h3 class="text-sm sm:text-base font-semibold text-white flex items-center gap-1.5">
+              <span>👤</span> 当日活跃客户端 IP
             </h3>
             <button @click="activeTab = 'ips'" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">查看全部 &rarr;</button>
           </div>
-          <p class="text-xs text-slate-400 mb-4">按当日请求量排序的客户端设备，点击任意 IP 可查看专项画像</p>
+          <div class="flex items-center justify-between text-[11px] sm:text-xs text-slate-400 mb-3">
+            <span>按请求量降序，点击可查看专项画像</span>
+            <span class="sm:hidden text-slate-500">👈 左右滑动 👉</span>
+          </div>
           
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm">
+          <div class="overflow-x-auto touch-scroll -mx-4 sm:mx-0 px-4 sm:px-0">
+            <table class="w-full text-left text-xs sm:text-sm min-w-[560px]">
               <thead>
-                <tr class="text-xs text-slate-400 border-b border-slate-800">
-                  <th class="pb-3 font-medium">客户端 IP</th>
-                  <th class="pb-3 font-medium">设备别名 / 备注</th>
-                  <th class="pb-3 font-medium">物理归属地 / 运营商</th>
-                  <th class="pb-3 font-medium text-right">今日请求量</th>
-                  <th class="pb-3 font-medium text-right">操作</th>
+                <tr class="text-[11px] sm:text-xs text-slate-400 border-b border-slate-800">
+                  <th class="pb-2.5 font-medium">客户端 IP</th>
+                  <th class="pb-2.5 font-medium">设备备注</th>
+                  <th class="pb-2.5 font-medium">归属地 / 运营商</th>
+                  <th class="pb-2.5 font-medium text-right">今日请求</th>
+                  <th class="pb-2.5 font-medium text-right">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-800/60">
                 <tr v-for="item in overview.top_ips" :key="item.ip" class="hover:bg-slate-800/30 transition-colors">
-                  <td class="py-3 font-mono text-sm text-slate-200">
+                  <td class="py-2.5 font-mono text-xs sm:text-sm text-slate-200">
                     {{ item.ip }}
                   </td>
-                  <td class="py-3">
-                    <div class="flex items-center space-x-2">
-                      <span v-if="item.alias" class="px-2 py-0.5 text-xs rounded bg-indigo-500/20 text-indigo-300 font-medium cursor-pointer hover:bg-indigo-500/30" @click="openAliasModal(item.ip, item.alias)" title="点击修改备注">
+                  <td class="py-2.5">
+                    <div class="flex items-center space-x-1.5">
+                      <span v-if="item.alias" class="px-2 py-0.5 text-xs rounded bg-indigo-500/20 text-indigo-300 font-medium cursor-pointer hover:bg-indigo-500/30 truncate max-w-[120px]" @click="openAliasModal(item.ip, item.alias)" title="点击修改备注">
                         {{ item.alias }}
                       </span>
-                      <button v-else @click="openAliasModal(item.ip, '')" class="text-xs text-slate-400 hover:text-indigo-300 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 transition-colors">
-                        + 添加备注
+                      <button v-else @click="openAliasModal(item.ip, '')" class="text-[11px] text-slate-400 hover:text-indigo-300 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 transition-colors whitespace-nowrap">
+                        + 备注
                       </button>
                       <button v-if="item.alias" @click="openAliasModal(item.ip, item.alias)" class="text-slate-400 hover:text-indigo-300 text-xs" title="编辑备注">
                         ✏️
                       </button>
                     </div>
                   </td>
-                  <td class="py-3 text-xs text-slate-300">
+                  <td class="py-2.5 text-xs text-slate-300">
                     {{ item.location || '未知' }}
                     <span v-if="item.isp" class="text-slate-500 ml-1">({{ item.isp }})</span>
                   </td>
-                  <td class="py-3 font-bold text-right text-emerald-400">
+                  <td class="py-2.5 font-bold text-right text-emerald-400">
                     {{ item.count ? item.count.toLocaleString() : 0 }}
                   </td>
-                  <td class="py-3 text-right">
-                    <button @click="openIpDetail(item.ip)" class="text-xs px-3 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 rounded-lg transition-all font-medium">
+                  <td class="py-2.5 text-right whitespace-nowrap">
+                    <button @click="openIpDetail(item.ip)" class="text-xs px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 rounded-lg transition-all font-medium">
                       画像分析
                     </button>
                   </td>
@@ -250,67 +280,71 @@
           </div>
         </div>
       </div>
-      <div v-show="activeTab === 'ips'" class="space-y-6">
-        <div class="glass-card rounded-2xl p-6">
-          <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+
+      <!-- TAB 2: 客户端 IP 专项统计中心 (IP Analytics) -->
+      <div v-show="activeTab === 'ips'" class="space-y-4 sm:space-y-6">
+        <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-4 sm:mb-6">
             <div>
-              <h2 class="text-lg font-bold text-white">客户端 IP 画像与使用统计</h2>
-              <p class="text-xs text-slate-400 mt-1">自动识别各客户端 IP 归属地，支持自定义标签别名与深度行为穿透分析</p>
+              <h2 class="text-base sm:text-lg font-bold text-white">客户端 IP 画像与使用统计</h2>
+              <p class="text-[11px] sm:text-xs text-slate-400 mt-0.5">自动识别各客户端归属地，支持自定义设备别名与行为画像穿透</p>
             </div>
             <div class="text-xs text-slate-400">
-              共发现 <span class="text-indigo-400 font-semibold">{{ ipTotal }}</span> 个连接客户端 IP
+              共发现 <span class="text-indigo-400 font-semibold">{{ ipTotal }}</span> 个活跃客户端 IP
             </div>
           </div>
 
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm">
-              <thead class="bg-slate-900/50 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-800">
+          <div class="sm:hidden text-[11px] text-slate-500 mb-2">👈 左右滑动表格查看完整列 👉</div>
+
+          <div class="overflow-x-auto touch-scroll -mx-4 sm:mx-0 px-4 sm:px-0">
+            <table class="w-full text-left text-xs sm:text-sm min-w-[660px]">
+              <thead class="bg-slate-900/50 text-slate-400 text-[11px] sm:text-xs uppercase tracking-wider border-b border-slate-800">
                 <tr>
-                  <th class="py-3 px-4">客户端 IP 地址</th>
-                  <th class="py-3 px-4">设备别名 / 备注</th>
-                  <th class="py-3 px-4">物理归属地 / 运营商</th>
-                  <th class="py-3 px-4 text-right">当日请求</th>
-                  <th class="py-3 px-4 text-right">历史总请求</th>
-                  <th class="py-3 px-4">首次 / 最近活跃时间</th>
-                  <th class="py-3 px-4 text-center">操作</th>
+                  <th class="py-2.5 px-3 sm:px-4">客户端 IP</th>
+                  <th class="py-2.5 px-3 sm:px-4">设备别名 / 备注</th>
+                  <th class="py-2.5 px-3 sm:px-4">归属地 / 运营商</th>
+                  <th class="py-2.5 px-3 sm:px-4 text-right">当日请求</th>
+                  <th class="py-2.5 px-3 sm:px-4 text-right">历史总请求</th>
+                  <th class="py-2.5 px-3 sm:px-4">首末活跃时间</th>
+                  <th class="py-2.5 px-3 sm:px-4 text-center">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-800">
                 <tr v-for="item in ipList" :key="item.client_ip" class="hover:bg-slate-800/40 transition-colors">
-                  <td class="py-3 px-4 font-mono font-medium text-slate-200">
+                  <td class="py-2.5 px-3 sm:px-4 font-mono font-medium text-slate-200">
                     {{ item.client_ip }}
                   </td>
-                  <td class="py-3 px-4">
-                    <div class="flex items-center space-x-2">
-                      <span v-if="item.alias" class="px-2 py-0.5 text-xs rounded bg-indigo-500/20 text-indigo-300 font-medium cursor-pointer hover:bg-indigo-500/30" @click="openAliasModal(item.client_ip, item.alias)" title="点击修改备注">
+                  <td class="py-2.5 px-3 sm:px-4">
+                    <div class="flex items-center space-x-1.5">
+                      <span v-if="item.alias" class="px-2 py-0.5 text-xs rounded bg-indigo-500/20 text-indigo-300 font-medium cursor-pointer hover:bg-indigo-500/30 truncate max-w-[120px]" @click="openAliasModal(item.client_ip, item.alias)" title="点击修改备注">
                         {{ item.alias }}
                       </span>
-                      <button v-else @click="openAliasModal(item.client_ip, '')" class="text-xs text-slate-400 hover:text-indigo-300 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 transition-colors">
-                        + 添加备注
+                      <button v-else @click="openAliasModal(item.client_ip, '')" class="text-[11px] text-slate-400 hover:text-indigo-300 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 transition-colors whitespace-nowrap">
+                        + 备注
                       </button>
                       <button v-if="item.alias" @click="openAliasModal(item.client_ip, item.alias)" class="text-slate-400 hover:text-indigo-300 text-xs" title="编辑备注">
                         ✏️
                       </button>
                     </div>
                   </td>
-                  <td class="py-3 px-4 text-xs">
+                  <td class="py-2.5 px-3 sm:px-4 text-xs">
                     <span class="text-slate-300">{{ item.location || '未知' }}</span>
                     <span v-if="item.isp" class="text-slate-500 ml-1">({{ item.isp }})</span>
                   </td>
-                  <td class="py-3 px-4 text-right font-bold" :class="item.today_count > 0 ? 'text-emerald-400' : 'text-slate-500'">
+                  <td class="py-2.5 px-3 sm:px-4 text-right font-bold" :class="item.today_count > 0 ? 'text-emerald-400' : 'text-slate-500'">
                     {{ item.today_count ? item.today_count.toLocaleString() : 0 }}
                   </td>
-                  <td class="py-3 px-4 text-right font-semibold text-slate-300">
+                  <td class="py-2.5 px-3 sm:px-4 text-right font-semibold text-slate-300">
                     {{ item.total_count ? item.total_count.toLocaleString() : 0 }}
                   </td>
-                  <td class="py-3 px-4 text-xs text-slate-400">
+                  <td class="py-2.5 px-3 sm:px-4 text-[11px] sm:text-xs text-slate-400 whitespace-nowrap">
                     <div>首: {{ item.first_seen }}</div>
                     <div class="text-slate-500">末: {{ item.last_seen }}</div>
                   </td>
-                  <td class="py-3 px-4 text-center">
+                  <td class="py-2.5 px-3 sm:px-4 text-center whitespace-nowrap">
                     <button 
                       @click="openIpDetail(item.client_ip)" 
-                      class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-medium rounded-lg transition-all shadow-sm">
+                      class="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-medium rounded-lg transition-all shadow-sm">
                       画像穿透
                     </button>
                   </td>
@@ -320,7 +354,7 @@
           </div>
 
           <!-- IP List Pagination -->
-          <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 text-xs text-slate-400">
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-slate-800 text-xs text-slate-400">
             <div>
               共 <span class="text-indigo-400 font-semibold">{{ ipTotal }}</span> 个客户端 IP，第 {{ ipPage }} / {{ Math.ceil(ipTotal / 50) || 1 }} 页
             </div>
@@ -344,41 +378,43 @@
       </div>
 
       <!-- TAB 3: 日志明细检索 (Log Explorer) -->
-      <div v-show="activeTab === 'logs'" class="space-y-6">
-        <div class="glass-card rounded-2xl p-6">
-          <h2 class="text-lg font-bold text-white mb-4">访问日志检索与过滤</h2>
+      <div v-show="activeTab === 'logs'" class="space-y-4 sm:space-y-6">
+        <div class="glass-card rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <h2 class="text-base sm:text-lg font-bold text-white mb-3 sm:mb-4">访问日志检索与过滤</h2>
           
-          <!-- Filters Row -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <!-- Filters Row: Mobile optimized responsive grid -->
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-4 mb-4 sm:mb-6">
             <div>
-              <label class="block text-xs font-medium text-slate-400 mb-1">日期</label>
-              <select v-model="logFilters.date" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-slate-200">
+              <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">日期</label>
+              <select v-model="logFilters.date" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200">
                 <option value="">全部历史日期</option>
                 <option v-for="d in availableDates" :key="d" :value="d">{{ d }}</option>
               </select>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-400 mb-1">客户端 IP</label>
-              <input v-model="logFilters.client_ip" placeholder="如 116.237..." class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-slate-200" />
+              <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">目标端口</label>
+              <input v-model.number="logFilters.target_port" placeholder="如 443" type="number" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
-            <div>
-              <label class="block text-xs font-medium text-slate-400 mb-1">目标域名/IP</label>
-              <input v-model="logFilters.target_host" placeholder="如 google.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-slate-200" />
+            <div class="col-span-2 md:col-span-1">
+              <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">客户端 IP</label>
+              <input v-model="logFilters.client_ip" placeholder="如 116.237..." class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
-            <div>
-              <label class="block text-xs font-medium text-slate-400 mb-1">目标端口</label>
-              <input v-model.number="logFilters.target_port" placeholder="如 443" type="number" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-slate-200" />
+            <div class="col-span-2 md:col-span-1">
+              <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">目标域名/IP</label>
+              <input v-model="logFilters.target_host" placeholder="如 google.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
-            <div class="flex items-end">
-              <button @click="searchLogs(1)" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 rounded-lg text-sm transition-all">
+            <div class="col-span-2 md:col-span-1 flex items-end">
+              <button @click="searchLogs(1)" class="w-full bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-medium py-2 rounded-lg text-xs sm:text-sm transition-all shadow-md">
                 🔍 搜索日志
               </button>
             </div>
           </div>
 
+          <div class="sm:hidden text-[11px] text-slate-500 mb-2">👈 左右滑动表格查看日志详情 👉</div>
+
           <!-- Table -->
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
+          <div class="overflow-x-auto touch-scroll -mx-4 sm:mx-0 px-4 sm:px-0">
+            <table class="w-full text-left text-xs font-mono min-w-[620px]">
               <thead class="bg-slate-900/60 text-slate-400 uppercase tracking-wider border-b border-slate-800">
                 <tr>
                   <th class="py-2.5 px-3">时间</th>
@@ -392,13 +428,13 @@
               </thead>
               <tbody class="divide-y divide-slate-800">
                 <tr v-for="log in logResults" :key="log.id" class="hover:bg-slate-800/30">
-                  <td class="py-2 px-3 text-slate-400">{{ log.timestamp }}</td>
-                  <td class="py-2 px-3 font-semibold text-slate-200">{{ log.client_ip }}</td>
+                  <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ log.timestamp }}</td>
+                  <td class="py-2 px-3 font-semibold text-slate-200 whitespace-nowrap">{{ log.client_ip }}</td>
                   <td class="py-2 px-3 text-indigo-400">{{ log.network }}</td>
-                  <td class="py-2 px-3 text-emerald-300 break-all">{{ log.target_host }}</td>
+                  <td class="py-2 px-3 text-emerald-300 break-all max-w-[200px]">{{ log.target_host }}</td>
                   <td class="py-2 px-3 text-amber-300">{{ log.target_port }}</td>
-                  <td class="py-2 px-3 text-slate-400">{{ log.outbound_tag || '-' }}</td>
-                  <td class="py-2 px-3">
+                  <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ log.outbound_tag || '-' }}</td>
+                  <td class="py-2 px-3 whitespace-nowrap">
                     <span :class="log.status === 'accepted' ? 'text-emerald-400' : 'text-rose-400'">{{ log.status }}</span>
                   </td>
                 </tr>
@@ -410,84 +446,84 @@
           </div>
 
           <!-- Pagination -->
-          <div class="flex items-center justify-between mt-4 text-xs text-slate-400">
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 text-xs text-slate-400">
             <div>共 {{ logTotal.toLocaleString() }} 条记录，第 {{ logPage }} / {{ Math.ceil(logTotal / 50) || 1 }} 页</div>
             <div class="flex space-x-2">
-              <button :disabled="logPage <= 1" @click="searchLogs(logPage - 1)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 rounded disabled:opacity-40">上一页</button>
-              <button :disabled="logPage >= Math.ceil(logTotal / 50)" @click="searchLogs(logPage + 1)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 rounded disabled:opacity-40">下一页</button>
+              <button :disabled="logPage <= 1" @click="searchLogs(logPage - 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40">上一页</button>
+              <button :disabled="logPage >= Math.ceil(logTotal / 50)" @click="searchLogs(logPage + 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40">下一页</button>
             </div>
           </div>
         </div>
       </div>
     </main>
 
-    <!-- IP 画像穿透下钻弹窗 (Drill-down Modal) -->
-    <div v-if="currentIpDetail" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="glass-card w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden flex flex-col shadow-2xl border border-slate-700">
+    <!-- IP 画像穿透下钻弹窗 (Drill-down Modal) - Mobile Bottom Sheet style -->
+    <div v-if="currentIpDetail" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="glass-card w-full max-w-4xl max-h-[92vh] sm:max-h-[90vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col shadow-2xl border border-slate-700">
         <!-- Modal Header -->
-        <div class="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
-          <div>
-            <div class="flex items-center space-x-3">
-              <h3 class="text-xl font-bold font-mono text-white">{{ currentIpDetail.client_ip }}</h3>
-              <span v-if="currentIpDetail.alias" class="px-2.5 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-300 font-medium">
+        <div class="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+          <div class="min-w-0 pr-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <h3 class="text-base sm:text-xl font-bold font-mono text-white">{{ currentIpDetail.client_ip }}</h3>
+              <span v-if="currentIpDetail.alias" class="px-2 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-300 font-medium truncate max-w-[140px]">
                 {{ currentIpDetail.alias }}
               </span>
               <button 
                 @click="openAliasModal(currentIpDetail.client_ip, currentIpDetail.alias)" 
-                class="text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 flex items-center space-x-1 transition-all">
+                class="text-xs px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 flex items-center space-x-1 transition-all">
                 <span>✏️</span>
-                <span>{{ currentIpDetail.alias ? '修改别名' : '添加设备备注' }}</span>
+                <span>{{ currentIpDetail.alias ? '改备注' : '加备注' }}</span>
               </button>
             </div>
-            <p class="text-xs text-slate-400 mt-1">
+            <p class="text-[11px] sm:text-xs text-slate-400 mt-1 truncate">
               归属地：{{ currentIpDetail.location || '未知' }} {{ currentIpDetail.isp ? '(' + currentIpDetail.isp + ')' : '' }} ·
-              历史累计请求 {{ currentIpDetail.total_count ? currentIpDetail.total_count.toLocaleString() : 0 }} 次
+              累计 {{ currentIpDetail.total_count ? currentIpDetail.total_count.toLocaleString() : 0 }} 次
             </p>
           </div>
-          <button @click="currentIpDetail = null" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800">
+          <button @click="currentIpDetail = null" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 shrink-0">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>
 
         <!-- Modal Body Scrollable -->
-        <div class="p-6 overflow-y-auto space-y-6 flex-1">
+        <div class="p-3 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 flex-1 touch-scroll">
           <!-- 24h Activity for this IP -->
-          <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-800">
-            <h4 class="text-sm font-semibold text-slate-200 mb-2">🕒 该 IP 当日 24 小时活跃时段分布</h4>
-            <div id="ipHourlyChart" class="w-full h-56"></div>
+          <div class="bg-slate-900/50 rounded-xl p-3 sm:p-4 border border-slate-800">
+            <h4 class="text-xs sm:text-sm font-semibold text-slate-200 mb-2">🕒 该 IP 当日 24 小时活跃时段分布</h4>
+            <div id="ipHourlyChart" class="w-full h-44 sm:h-56"></div>
           </div>
 
           <!-- Top Visited Domains by this IP -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-800">
-              <h4 class="text-sm font-semibold text-slate-200 mb-3">🌐 该 IP 访问域名 Top 15</h4>
-              <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-slate-900/50 rounded-xl p-3 sm:p-4 border border-slate-800">
+              <h4 class="text-xs sm:text-sm font-semibold text-slate-200 mb-2 sm:mb-3">🌐 该 IP 访问域名 Top 15</h4>
+              <div class="space-y-1.5 max-h-56 sm:max-h-64 overflow-y-auto pr-1">
                 <div v-for="d in currentIpDetail.top_domains" :key="d.domain" class="flex justify-between text-xs py-1 border-b border-slate-800/50">
-                  <span class="font-mono text-slate-300 truncate max-w-[220px]" :title="d.domain">{{ d.domain }}</span>
-                  <span class="font-bold text-emerald-400">{{ d.count.toLocaleString() }} 次</span>
+                  <span class="font-mono text-slate-300 truncate max-w-[180px] sm:max-w-[220px]" :title="d.domain">{{ d.domain }}</span>
+                  <span class="font-bold text-emerald-400 shrink-0 ml-2">{{ d.count.toLocaleString() }} 次</span>
                 </div>
               </div>
             </div>
 
             <!-- Top Ports for this IP -->
-            <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-800">
-              <h4 class="text-sm font-semibold text-slate-200 mb-3">🔌 该 IP 访问端口分布</h4>
-              <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+            <div class="bg-slate-900/50 rounded-xl p-3 sm:p-4 border border-slate-800">
+              <h4 class="text-xs sm:text-sm font-semibold text-slate-200 mb-2 sm:mb-3">🔌 该 IP 访问端口分布</h4>
+              <div class="space-y-1.5 max-h-56 sm:max-h-64 overflow-y-auto pr-1">
                 <div v-for="p in currentIpDetail.top_ports" :key="p.port" class="flex justify-between text-xs py-1 border-b border-slate-800/50">
                   <span class="font-mono text-slate-300">端口 {{ p.port }}</span>
-                  <span class="font-bold text-amber-400">{{ p.count.toLocaleString() }} 次</span>
+                  <span class="font-bold text-amber-400 shrink-0 ml-2">{{ p.count.toLocaleString() }} 次</span>
                 </div>
               </div>
             </div>
           </div>
 
           <!-- Recent Logs for this IP -->
-          <div class="bg-slate-900/50 rounded-xl p-4 border border-slate-800">
-            <h4 class="text-sm font-semibold text-slate-200 mb-3">📜 该 IP 最新 30 条访问记录流水</h4>
-            <div class="overflow-x-auto max-h-56">
-              <table class="w-full text-left text-xs font-mono">
+          <div class="bg-slate-900/50 rounded-xl p-3 sm:p-4 border border-slate-800">
+            <h4 class="text-xs sm:text-sm font-semibold text-slate-200 mb-2 sm:mb-3">📜 最近 30 条访问流水</h4>
+            <div class="overflow-x-auto touch-scroll max-h-48 sm:max-h-56">
+              <table class="w-full text-left text-xs font-mono min-w-[500px]">
                 <thead>
-                  <tr class="text-slate-500 border-b border-slate-800">
+                  <tr class="text-slate-500 border-b border-slate-800 text-[11px]">
                     <th class="pb-1.5">时间</th>
                     <th class="pb-1.5">协议</th>
                     <th class="pb-1.5">目标主机</th>
@@ -497,11 +533,11 @@
                 </thead>
                 <tbody class="divide-y divide-slate-800/50 text-slate-300">
                   <tr v-for="(log, idx) in currentIpDetail.recent_logs" :key="idx">
-                    <td class="py-1 text-slate-500">{{ log.timestamp }}</td>
-                    <td class="py-1 text-indigo-400">{{ log.network }}</td>
+                    <td class="py-1 text-slate-500 whitespace-nowrap">{{ log.timestamp }}</td>
+                    <td class="py-1 text-indigo-400 whitespace-nowrap">{{ log.network }}</td>
                     <td class="py-1 text-emerald-300 truncate max-w-xs">{{ log.target_host }}</td>
-                    <td class="py-1 text-amber-300">{{ log.target_port }}</td>
-                    <td class="py-1 text-slate-400">{{ log.status }}</td>
+                    <td class="py-1 text-amber-300 whitespace-nowrap">{{ log.target_port }}</td>
+                    <td class="py-1 text-slate-400 whitespace-nowrap">{{ log.status }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -512,10 +548,10 @@
     </div>
 
     <!-- Edit Alias Modal -->
-    <div v-if="editingAlias" class="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-      <div class="glass-card w-full max-w-md rounded-2xl p-6 border border-slate-700 space-y-4">
-        <h3 class="text-lg font-bold text-white">设置设备别名备注</h3>
-        <p class="text-xs text-slate-400">为 IP <span class="font-mono text-indigo-400 font-bold">{{ editingAlias.ip }}</span> 设定易于辨认的名字（例如：我的手机、家里软路由、办公室 Mac 等）</p>
+    <div v-if="editingAlias" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="glass-card w-full max-w-md rounded-2xl p-5 sm:p-6 border border-slate-700 space-y-4">
+        <h3 class="text-base sm:text-lg font-bold text-white">设置设备别名备注</h3>
+        <p class="text-xs text-slate-400">为 IP <span class="font-mono text-indigo-400 font-bold">{{ editingAlias.ip }}</span> 设定易于辨认的名字（如：我的手机、家里软路由、公司 Mac 等）</p>
         
         <div>
           <label class="block text-xs font-medium text-slate-300 mb-1">设备别名</label>

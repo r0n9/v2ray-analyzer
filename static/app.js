@@ -50,6 +50,9 @@ createApp({
     let targetIpChart = null;
     let ipHourlyChart = null;
 
+    // Mobile detection helper
+    const isMobile = () => window.innerWidth < 640;
+
     // Fetch Overview Data
     const fetchOverview = async () => {
       try {
@@ -79,6 +82,8 @@ createApp({
 
     // Render Charts
     const renderOverviewCharts = () => {
+      const mobile = isMobile();
+
       // 1. Hourly Trend Chart
       const hourlyDom = document.getElementById('hourlyChart');
       if (hourlyDom) {
@@ -98,8 +103,8 @@ createApp({
             formatter: '{b} <br/> 请求量: <b>{c}</b> 次',
           },
           grid: {
-            left: '3%',
-            right: '4%',
+            left: mobile ? '1%' : '3%',
+            right: mobile ? '3%' : '4%',
             bottom: '3%',
             top: '8%',
             containLabel: true,
@@ -108,12 +113,16 @@ createApp({
             type: 'category',
             data: hours,
             axisLine: { lineStyle: { color: '#334155' } },
-            axisLabel: { color: '#94a3b8', interval: 2 },
+            axisLabel: {
+              color: '#94a3b8',
+              interval: mobile ? 3 : 2,
+              fontSize: mobile ? 10 : 12,
+            },
           },
           yAxis: {
             type: 'value',
             splitLine: { lineStyle: { color: '#1e293b' } },
-            axisLabel: { color: '#94a3b8' },
+            axisLabel: { color: '#94a3b8', fontSize: mobile ? 10 : 12 },
           },
           series: [
             {
@@ -121,9 +130,9 @@ createApp({
               type: 'line',
               smooth: true,
               data: values,
-              symbolSize: 6,
+              symbolSize: mobile ? 4 : 6,
               itemStyle: { color: '#6366f1' },
-              lineStyle: { width: 3, color: '#6366f1' },
+              lineStyle: { width: mobile ? 2 : 3, color: '#6366f1' },
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
                   { offset: 0, color: 'rgba(99, 102, 241, 0.45)' },
@@ -156,8 +165,8 @@ createApp({
             formatter: '{b} <br/> 请求数: <b>{c}</b> 次',
           },
           grid: {
-            left: '3%',
-            right: '6%',
+            left: mobile ? '1%' : '3%',
+            right: mobile ? '4%' : '6%',
             bottom: '3%',
             top: '3%',
             containLabel: true,
@@ -165,7 +174,7 @@ createApp({
           xAxis: {
             type: 'value',
             splitLine: { lineStyle: { color: '#1e293b' } },
-            axisLabel: { color: '#94a3b8' },
+            axisLabel: { color: '#94a3b8', fontSize: mobile ? 10 : 12 },
           },
           yAxis: {
             type: 'category',
@@ -173,7 +182,15 @@ createApp({
             axisLine: { lineStyle: { color: '#334155' } },
             axisLabel: {
               color: '#cbd5e1',
-              formatter: (val) => (val.length > 22 ? val.slice(0, 20) + '...' : val),
+              fontSize: mobile ? 10 : 12,
+              formatter: (val) =>
+                mobile
+                  ? val.length > 13
+                    ? val.slice(0, 11) + '..'
+                    : val
+                  : val.length > 22
+                  ? val.slice(0, 20) + '...'
+                  : val,
             },
           },
           series: [
@@ -213,8 +230,8 @@ createApp({
             formatter: '{b} <br/> 请求数: <b>{c}</b> 次',
           },
           grid: {
-            left: '3%',
-            right: '6%',
+            left: mobile ? '1%' : '3%',
+            right: mobile ? '4%' : '6%',
             bottom: '3%',
             top: '3%',
             containLabel: true,
@@ -222,7 +239,7 @@ createApp({
           xAxis: {
             type: 'value',
             splitLine: { lineStyle: { color: '#1e293b' } },
-            axisLabel: { color: '#94a3b8' },
+            axisLabel: { color: '#94a3b8', fontSize: mobile ? 10 : 12 },
           },
           yAxis: {
             type: 'category',
@@ -230,7 +247,15 @@ createApp({
             axisLine: { lineStyle: { color: '#334155' } },
             axisLabel: {
               color: '#cbd5e1',
-              formatter: (val) => (val.length > 22 ? val.slice(0, 20) + '...' : val),
+              fontSize: mobile ? 10 : 12,
+              formatter: (val) =>
+                mobile
+                  ? val.length > 14
+                    ? val.slice(0, 13) + '..'
+                    : val
+                  : val.length > 22
+                  ? val.slice(0, 20) + '...'
+                  : val,
             },
           },
           series: [
@@ -292,6 +317,7 @@ createApp({
       }
       ipHourlyChart = echarts.init(dom);
 
+      const mobile = isMobile();
       const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
       const values = currentIpDetail.value.hourly_distribution || Array(24).fill(0);
 
@@ -304,8 +330,8 @@ createApp({
           textStyle: { color: '#f8fafc' },
         },
         grid: {
-          left: '3%',
-          right: '4%',
+          left: mobile ? '1%' : '3%',
+          right: mobile ? '3%' : '4%',
           bottom: '3%',
           top: '10%',
           containLabel: true,
@@ -314,12 +340,16 @@ createApp({
           type: 'category',
           data: hours,
           axisLine: { lineStyle: { color: '#334155' } },
-          axisLabel: { color: '#94a3b8', interval: 2 },
+          axisLabel: {
+            color: '#94a3b8',
+            interval: mobile ? 3 : 2,
+            fontSize: mobile ? 10 : 12,
+          },
         },
         yAxis: {
           type: 'value',
           splitLine: { lineStyle: { color: '#1e293b' } },
-          axisLabel: { color: '#94a3b8' },
+          axisLabel: { color: '#94a3b8', fontSize: mobile ? 10 : 12 },
         },
         series: [
           {
@@ -439,11 +469,23 @@ createApp({
       await fetchOverview();
       await fetchIps(1);
 
+      let lastMobileState = isMobile();
       window.addEventListener('resize', () => {
-        if (hourlyChart) hourlyChart.resize();
-        if (domainChart) domainChart.resize();
-        if (targetIpChart) targetIpChart.resize();
-        if (ipHourlyChart) ipHourlyChart.resize();
+        const curMobileState = isMobile();
+        if (curMobileState !== lastMobileState) {
+          lastMobileState = curMobileState;
+          if (activeTab.value === 'overview') {
+            renderOverviewCharts();
+          }
+          if (currentIpDetail.value) {
+            renderIpChart();
+          }
+        } else {
+          if (hourlyChart) hourlyChart.resize();
+          if (domainChart) domainChart.resize();
+          if (targetIpChart) targetIpChart.resize();
+          if (ipHourlyChart) ipHourlyChart.resize();
+        }
       });
 
       // Smart polling: check lightweight version (O(1) memory check) every 15s
