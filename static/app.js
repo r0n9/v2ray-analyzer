@@ -2,6 +2,10 @@ const { createApp, ref, onMounted, nextTick, watch } = Vue;
 
 createApp({
   setup() {
+    const apiBase = window.location.pathname.endsWith('/')
+      ? window.location.pathname
+      : window.location.pathname + '/';
+
     const activeTab = ref('overview');
     const selectedDate = ref('');
     const availableDates = ref([]);
@@ -50,8 +54,8 @@ createApp({
     const fetchOverview = async () => {
       try {
         const url = selectedDate.value
-          ? `/api/stats/overview?date=${selectedDate.value}`
-          : '/api/stats/overview';
+          ? `${apiBase}api/stats/overview?date=${selectedDate.value}`
+          : `${apiBase}api/stats/overview`;
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to load overview data');
         const data = await res.json();
@@ -252,7 +256,7 @@ createApp({
       try {
         const params = new URLSearchParams({ page: page.toString(), page_size: '50' });
         if (selectedDate.value) params.append('date', selectedDate.value);
-        const res = await fetch(`/api/stats/ips?${params.toString()}`);
+        const res = await fetch(`${apiBase}api/stats/ips?${params.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch IPs');
         const data = await res.json();
         ipList.value = data.ips || [];
@@ -266,8 +270,8 @@ createApp({
     const openIpDetail = async (ip) => {
       try {
         const url = selectedDate.value
-          ? `/api/stats/ip/${ip}?date=${selectedDate.value}`
-          : `/api/stats/ip/${ip}`;
+          ? `${apiBase}api/stats/ip/${ip}?date=${selectedDate.value}`
+          : `${apiBase}api/stats/ip/${ip}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error('Failed to fetch IP details');
         currentIpDetail.value = await res.json();
@@ -342,7 +346,7 @@ createApp({
     const saveAlias = async () => {
       if (!editingAlias.value) return;
       try {
-        const res = await fetch('/api/alias', {
+        const res = await fetch(`${apiBase}api/alias`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(editingAlias.value),
@@ -379,7 +383,7 @@ createApp({
       if (logFilters.value.network) params.append('network', logFilters.value.network);
 
       try {
-        const res = await fetch(`/api/logs?${params.toString()}`);
+        const res = await fetch(`${apiBase}api/logs?${params.toString()}`);
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
         logResults.value = data.logs || [];
@@ -393,7 +397,7 @@ createApp({
     const triggerManualSync = async () => {
       syncing.value = true;
       try {
-        const res = await fetch('/api/sync', { method: 'POST' });
+        const res = await fetch(`${apiBase}api/sync`, { method: 'POST' });
         if (res.ok) {
           await fetchOverview();
           await fetchIps(1);
@@ -449,7 +453,7 @@ createApp({
         if (activeTab.value !== 'overview' && activeTab.value !== 'ips') return;
 
         try {
-          const res = await fetch('/api/stats/version');
+          const res = await fetch(`${apiBase}api/stats/version`);
           if (!res.ok) return;
           const { version } = await res.json();
 
