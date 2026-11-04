@@ -1,17 +1,21 @@
-import re
-from typing import Optional, Dict, Any
+from typing import Optional, Tuple
+
 
 class LogParser:
     """
-    Parser for V2Ray access log entries.
+    High-performance parser for V2Ray access log entries.
     Standard format:
     2026/11/03 15:36:47 116.237.189.87:0 accepted tcp:fa000000110.resources.office.net:443 [direct]
     or split logs format:
     2026/11/03 00:00:01 116.237.189.87:0 accepted tcp:ipv4.myexternalip.com:80
+
+    Optimized:
+    - Returns a raw tuple directly (avoids allocating ~10-key dictionary per line)
+    - Directly detects is_ip flag during parse time (eliminates runtime SQL GLOB)
     """
 
     @staticmethod
-    def parse_line(line: str) -> Optional[Dict[str, Any]]:
+    def parse_line(line: str) -> Optional[Tuple[str, str, int, str, int, str, str, str, int, str, int]]:
         line = line.strip()
         if not line or line.startswith("#"):
             return None
@@ -24,11 +28,11 @@ class LogParser:
         if len(parts) < 5:
             return None
 
-        date_raw = parts[0]  # 2026/11/03
-        time_raw = parts[1]  # 15:36:47
-        client_raw = parts[2]  # 116.237.189.87:0
+        date_raw = parts[0]   # 2026/11/03
+        time_raw = parts[1]   # 15:36:47
+        client_raw = parts[2] # 116.237.189.87:0
         status = parts[3].lower()  # accepted / rejected
-        target_raw = parts[4]  # tcp:example.com:443 or udp:[2403:...]:443
+        target_raw = parts[4] # tcp:example.com:443 or udp:[2403:...]:443
 
         # Parse date and hour
         # Normalise date from 2026/11/03 to 2026-11-03
@@ -83,15 +87,27 @@ class LogParser:
                     outbound_tag = extra.strip("[]")
                     break
 
-        return {
-            "timestamp": timestamp_str,
-            "date": date_str,
-            "hour": hour,
-            "client_ip": client_ip,
-            "client_port": client_port,
-            "status": status,
-            "network": protocol,
-            "target_host": target_host,
-            "target_port": target_port,
-            "outbound_tag": outbound_tag,
-        }
+        # Fast O(1) detection of target_host as IP (1) or Domain (0)
+        # IPv6: contains ':'
+        # IPv4: starts with digit, has 4 dot-separated parts, ends with digit
+        is_ip = 0
+        if ":" in target_host:
+            is_ip = 1
+        elif target_host and target_host[0].isdigit():
+            dots = target_host.split(".")
+            if len(dots) == 4 and dots[-1].isdigit():
+                is_ip = 1
+
+        return (
+            timestamp_str,
+            date_str,
+            hour,
+            client_ip,
+            client_port,
+            status,
+            protocol,
+            target_host,
+            target_port,
+            outbound_tag,
+            is_ip,
+        )

@@ -61,6 +61,24 @@ class Database:
         self._local.conn = conn
         return conn
 
+    def commit(self):
+        """Commit the current transaction on this thread's connection."""
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.commit()
+            except Exception as e:
+                logger.debug("Commit failed or no open transaction: %s", e)
+
+    def rollback(self):
+        """Rollback the current transaction on this thread's connection."""
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.rollback()
+            except Exception as e:
+                logger.debug("Rollback failed or no open transaction: %s", e)
+
     def _init_db(self):
         """Create tables using individual execute() calls — avoids executescript()
         which triggers implicit COMMIT via sqlite3_exec() and can cause disk I/O
@@ -80,14 +98,28 @@ class Database:
                     network TEXT DEFAULT 'tcp',
                     target_host TEXT NOT NULL,
                     target_port INTEGER NOT NULL,
-                    outbound_tag TEXT DEFAULT ''
+                    outbound_tag TEXT DEFAULT '',
+                    is_ip INTEGER DEFAULT 0
                 )
                 """)
+
+                # Check if is_ip column exists (migration for existing database)
+                cols = [r["name"] for r in conn.execute("PRAGMA table_info(access_logs)").fetchall()]
+                if "is_ip" not in cols:
+                    logger.info("Migrating access_logs table: adding is_ip column...")
+                    conn.execute("ALTER TABLE access_logs ADD COLUMN is_ip INTEGER DEFAULT 0")
+                    # Backfill existing data
+                    conn.execute("""
+                    UPDATE access_logs SET is_ip = 1
+                    WHERE target_host GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*' OR target_host GLOB '*:*'
+                    """)
+                    logger.info("is_ip migration and backfill completed.")
 
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_time ON access_logs (date, timestamp)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_client_ip ON access_logs (client_ip, date)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_target_host ON access_logs (target_host)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_hour ON access_logs (hour)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_date_is_ip ON access_logs (date, is_ip)")
 
                 conn.execute("""
                 CREATE TABLE IF NOT EXISTS processed_files (
@@ -103,34 +135,59 @@ class Database:
                 conn.rollback()
                 raise
 
-    def insert_logs_batch(self, logs: List[Dict[str, Any]]) -> int:
+    def insert_logs_batch(self, logs: List[Any], commit: bool = True) -> int:
+        """
+        Batch insert parsed logs.
+        Supports raw tuples (zero object allocation overhead) and dicts (backward-compatible).
+        `commit=False` allows wrapping an entire file in a single transaction.
+        """
         if not logs:
             return 0
-        data = [
-            (
-                item["timestamp"],
-                item["date"],
-                item["hour"],
-                item["client_ip"],
-                item.get("client_port", 0),
-                item.get("status", "accepted"),
-                item.get("network", "tcp"),
-                item["target_host"],
-                item.get("target_port", 0),
-                item.get("outbound_tag", ""),
-            )
-            for item in logs
-        ]
+
+        first = logs[0]
+        if isinstance(first, tuple):
+            if len(first) == 11:
+                data = logs
+            else:
+                # 10-element tuple without is_ip: compute is_ip
+                data = [
+                    (
+                        item[0], item[1], item[2], item[3], item[4],
+                        item[5], item[6], item[7], item[8], item[9],
+                        1 if (":" in item[7] or (item[7] and item[7][0].isdigit() and len(item[7].split(".")) == 4 and item[7].split(".")[-1].isdigit())) else 0
+                    )
+                    for item in logs
+                ]
+        else:
+            # Dict support for backward compatibility
+            data = [
+                (
+                    item["timestamp"],
+                    item["date"],
+                    item["hour"],
+                    item["client_ip"],
+                    item.get("client_port", 0),
+                    item.get("status", "accepted"),
+                    item.get("network", "tcp"),
+                    item["target_host"],
+                    item.get("target_port", 0),
+                    item.get("outbound_tag", ""),
+                    item.get("is_ip", 1 if (":" in item["target_host"] or (item["target_host"] and item["target_host"][0].isdigit() and len(item["target_host"].split(".")) == 4 and item["target_host"].split(".")[-1].isdigit())) else 0)
+                )
+                for item in logs
+            ]
+
         with self._lock:
             conn = self.get_connection()
             try:
                 conn.executemany("""
                 INSERT INTO access_logs (
                     timestamp, date, hour, client_ip, client_port,
-                    status, network, target_host, target_port, outbound_tag
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, network, target_host, target_port, outbound_tag, is_ip
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, data)
-                conn.commit()
+                if commit:
+                    conn.commit()
             except Exception:
                 conn.rollback()
                 raise
@@ -145,7 +202,7 @@ class Database:
             return dict(row)
         return None
 
-    def update_processed_file(self, filename: str, offset: int, mtime: float, total_lines: int):
+    def update_processed_file(self, filename: str, offset: int, mtime: float, total_lines: int, commit: bool = True):
         with self._lock:
             conn = self.get_connection()
             try:
@@ -153,7 +210,8 @@ class Database:
                 INSERT OR REPLACE INTO processed_files (filename, last_offset, last_mtime, total_lines, updated_at)
                 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (filename, offset, mtime, total_lines))
-                conn.commit()
+                if commit:
+                    conn.commit()
             except Exception:
                 conn.rollback()
                 raise
@@ -161,8 +219,9 @@ class Database:
     def get_overview_stats(self, date: Optional[str] = None) -> Dict[str, Any]:
         """
         Get KPI overview metrics and charts data.
-        Optimized: merged summary + hourly + protocol + outbound into a single scan,
-        reduced from 7 queries to 4.
+        Optimized:
+        - Merged summary + hourly + protocol + outbound into single scan
+        - Fast is_ip integer comparison (eliminates expensive runtime GLOB patterns)
         """
         conn = self.get_connection()
 
@@ -189,8 +248,6 @@ class Database:
             hour,
             network,
             COALESCE(NULLIF(outbound_tag, ''), 'direct') AS tag,
-            client_ip,
-            target_host,
             COUNT(*) AS cnt
         FROM access_logs
         WHERE date = ?
@@ -198,8 +255,6 @@ class Database:
         """, (date,)).fetchall()
 
         total_requests = 0
-        unique_ips = set()
-        unique_domains = set()
         hourly = [0] * 24
         protocols: Dict[str, int] = {}
         outbounds: Dict[str, int] = {}
@@ -211,7 +266,7 @@ class Database:
             protocols[r["network"]] = protocols.get(r["network"], 0) + cnt
             outbounds[r["tag"]] = outbounds.get(r["tag"], 0) + cnt
 
-        # We still need distinct counts — but with a lighter single query
+        # Distinct counts with indexed date scan
         uniques = conn.execute("""
         SELECT
             COUNT(DISTINCT client_ip) AS unique_ips,
@@ -220,21 +275,21 @@ class Database:
         WHERE date = ?
         """, (date,)).fetchone()
 
-        # === Query 2: Top 10 target domains (excluding raw IPs) ===
+        # === Query 2: Top 10 target domains (fast is_ip = 0, no GLOB pattern matching) ===
         top_domains = conn.execute("""
         SELECT target_host, COUNT(*) AS count
         FROM access_logs
-        WHERE date = ? AND NOT (target_host GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*' OR target_host GLOB '*:*')
+        WHERE date = ? AND is_ip = 0
         GROUP BY target_host
         ORDER BY count DESC
         LIMIT 10
         """, (date,)).fetchall()
 
-        # === Query 3: Top 10 target IPs (raw IPv4 and IPv6) ===
+        # === Query 3: Top 10 target IPs (fast is_ip = 1, no GLOB pattern matching) ===
         top_target_ips = conn.execute("""
         SELECT target_host, COUNT(*) AS count
         FROM access_logs
-        WHERE date = ? AND (target_host GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*' OR target_host GLOB '*:*')
+        WHERE date = ? AND is_ip = 1
         GROUP BY target_host
         ORDER BY count DESC
         LIMIT 10
@@ -273,7 +328,7 @@ class Database:
     def get_all_ips_stats(self, date: Optional[str] = None,
                           page: int = 1, page_size: int = 50) -> Tuple[List[Dict[str, Any]], int]:
         """
-        List client IPs with counts and timestamps — now with pagination.
+        List client IPs with counts and timestamps — paginated.
         Returns (rows, total_count).
         """
         conn = self.get_connection()
@@ -394,24 +449,33 @@ class Database:
             params.append(date)
         if client_ip:
             conditions.append("client_ip = ?")
-            params.append(client_ip)
+            params.append(client_ip.strip())
         if target_host:
-            conditions.append("target_host LIKE ?")
-            params.append(f"%{target_host}%")
+            th = target_host.strip()
+            if "%" in th or "*" in th:
+                conditions.append("target_host LIKE ?")
+                params.append(th.replace("*", "%"))
+            else:
+                conditions.append("target_host LIKE ?")
+                params.append(f"%{th}%")
         if target_port:
             conditions.append("target_port = ?")
             params.append(target_port)
         if network:
             conditions.append("network = ?")
-            params.append(network.lower())
+            params.append(network.lower().strip())
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         conn = self.get_connection()
 
-        # Count total
-        count_query = f"SELECT COUNT(*) AS total FROM access_logs {where_clause}"
-        total = conn.execute(count_query, params).fetchone()["total"]
+        # Count total: O(1) estimate on empty filter vs filtered COUNT(*)
+        if not conditions:
+            row = conn.execute("SELECT MAX(id) AS total FROM access_logs").fetchone()
+            total = row["total"] or 0
+        else:
+            count_query = f"SELECT COUNT(*) AS total FROM access_logs {where_clause}"
+            total = conn.execute(count_query, params).fetchone()["total"]
 
         # Pagination
         offset = (page - 1) * page_size

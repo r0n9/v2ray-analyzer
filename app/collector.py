@@ -1,12 +1,12 @@
 import glob
 import logging
 import os
-import time
 from typing import Dict, Any, List
 from .database import Database
 from .parser import LogParser
 
 logger = logging.getLogger("v2ray_analyzer.collector")
+
 
 class LogCollector:
     def __init__(self, db: Database, log_dir: str, access_log_path: str):
@@ -29,6 +29,10 @@ class LogCollector:
     def import_historical_logs(self) -> int:
         """
         Scan directory for historical logs like 2026_11_03.log and import unread ones.
+        Optimized:
+        - Entire file imported inside a single transaction (reduces fsync count from N to 1)
+        - Float mtime comparison with tolerance (avoids spurious re-imports)
+        - Direct raw tuple passing (avoids allocating dictionary per line)
         """
         total_imported = 0
         pattern = os.path.join(self.log_dir, "*.log")
@@ -46,52 +50,67 @@ class LogCollector:
                 continue
 
             record = self.db.get_processed_file(basename)
-            # If already processed and mtime matches, skip
-            if record and record.get("last_mtime") == stat.st_mtime and record.get("last_offset", 0) >= stat.st_size:
-                continue
+            # If already processed and mtime matches (with tolerance) and offset >= size, skip
+            if record:
+                mtime_diff = abs(record.get("last_mtime", 0) - stat.st_mtime)
+                last_offset = record.get("last_offset", 0)
+                if (mtime_diff < 0.01 or last_offset >= stat.st_size) and last_offset >= stat.st_size:
+                    continue
 
             logger.info(f"Importing historical log: {basename}...")
             lines_in_file = 0
-            batch = []
+            batch: List[tuple] = []
 
             start_offset = record.get("last_offset", 0) if record else 0
             if start_offset > stat.st_size:
                 start_offset = 0
 
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                if start_offset > 0:
-                    f.seek(start_offset)
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    if start_offset > 0:
+                        f.seek(start_offset)
 
-                for line in f:
-                    parsed = LogParser.parse_line(line)
-                    if parsed:
-                        batch.append(parsed)
-                        lines_in_file += 1
+                    for line in f:
+                        parsed = LogParser.parse_line(line)
+                        if parsed:
+                            batch.append(parsed)
+                            lines_in_file += 1
 
-                    if len(batch) >= self.batch_size:
-                        self.db.insert_logs_batch(batch)
+                        if len(batch) >= self.batch_size:
+                            self.db.insert_logs_batch(batch, commit=False)
+                            batch.clear()
+
+                    if batch:
+                        self.db.insert_logs_batch(batch, commit=False)
                         batch.clear()
 
-                if batch:
-                    self.db.insert_logs_batch(batch)
-                    batch.clear()
+                    current_offset = f.tell()
 
-                current_offset = f.tell()
+                # Atomically update processed_files record and commit in the same transaction
+                self.db.update_processed_file(
+                    filename=basename,
+                    offset=current_offset,
+                    mtime=stat.st_mtime,
+                    total_lines=(record.get("total_lines", 0) if record else 0) + lines_in_file,
+                    commit=False,
+                )
+                self.db.commit()
 
-            total_imported += lines_in_file
-            self.db.update_processed_file(
-                filename=basename,
-                offset=current_offset,
-                mtime=stat.st_mtime,
-                total_lines=(record.get("total_lines", 0) if record else 0) + lines_in_file,
-            )
-            logger.info(f"Finished {basename}: {lines_in_file} new lines imported.")
+                total_imported += lines_in_file
+                logger.info(f"Finished {basename}: {lines_in_file} new lines imported.")
+            except Exception as e:
+                self.db.rollback()
+                logger.error(f"Error importing {basename}: {e}")
+                continue
 
         return total_imported
 
     def sync_access_log(self) -> int:
         """
         Tails the live access.log file incrementally.
+        Optimized:
+        - Commits all batched lines and offset update in a single transaction
+        - Direct raw tuple passing (avoids per-line dict instantiation)
         """
         if not os.path.exists(self.access_log_path):
             return 0
@@ -114,34 +133,42 @@ class LogCollector:
             return 0  # No new data
 
         new_lines = 0
-        batch = []
+        batch: List[tuple] = []
 
-        with open(self.access_log_path, "r", encoding="utf-8", errors="ignore") as f:
-            f.seek(last_offset)
-            for line in f:
-                parsed = LogParser.parse_line(line)
-                if parsed:
-                    batch.append(parsed)
-                    new_lines += 1
+        try:
+            with open(self.access_log_path, "r", encoding="utf-8", errors="ignore") as f:
+                f.seek(last_offset)
+                for line in f:
+                    parsed = LogParser.parse_line(line)
+                    if parsed:
+                        batch.append(parsed)
+                        new_lines += 1
 
-                if len(batch) >= self.batch_size:
-                    self.db.insert_logs_batch(batch)
+                    if len(batch) >= self.batch_size:
+                        self.db.insert_logs_batch(batch, commit=False)
+                        batch.clear()
+
+                if batch:
+                    self.db.insert_logs_batch(batch, commit=False)
                     batch.clear()
 
-            if batch:
-                self.db.insert_logs_batch(batch)
-                batch.clear()
+                current_offset = f.tell()
 
-            current_offset = f.tell()
+            # Atomically update processed_files record and commit in the same transaction
+            self.db.update_processed_file(
+                filename=basename,
+                offset=current_offset,
+                mtime=stat.st_mtime,
+                total_lines=(record.get("total_lines", 0) if record else 0) + new_lines,
+                commit=False,
+            )
+            self.db.commit()
 
-        self.db.update_processed_file(
-            filename=basename,
-            offset=current_offset,
-            mtime=stat.st_mtime,
-            total_lines=(record.get("total_lines", 0) if record else 0) + new_lines,
-        )
+            if new_lines > 0:
+                logger.info(f"Incremental sync: {new_lines} lines ingested from access.log.")
 
-        if new_lines > 0:
-            logger.info(f"Incremental sync: {new_lines} lines ingested from access.log.")
-
-        return new_lines
+            return new_lines
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error during access.log sync: {e}")
+            return 0
