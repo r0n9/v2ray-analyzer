@@ -35,7 +35,8 @@ config = {
     "logs": {
         "log_dir": BASE_DIR,
         "access_log_path": os.path.join(BASE_DIR, "access.log"),
-        "scan_interval_seconds": 10
+        "scan_interval_seconds": 10,
+        "retention_days": 180
     },
     "database": {
         "db_path": os.path.join(BASE_DIR, "v2ray_stats.db")
@@ -62,6 +63,11 @@ if os.environ.get("DB_PATH"):
     config["database"]["db_path"] = os.environ["DB_PATH"]
 if os.environ.get("PORT"):
     config["server"]["port"] = int(os.environ["PORT"])
+if os.environ.get("RETENTION_DAYS"):
+    try:
+        config["logs"]["retention_days"] = int(os.environ["RETENTION_DAYS"])
+    except ValueError:
+        pass
 
 # Initialize singletons
 db = Database(config["database"]["db_path"])
@@ -69,7 +75,8 @@ geo = GeoResolver(db)
 collector = LogCollector(
     db=db,
     log_dir=config["logs"]["log_dir"],
-    access_log_path=config["logs"]["access_log_path"]
+    access_log_path=config["logs"]["access_log_path"],
+    retention_days=config["logs"].get("retention_days", 180),
 )
 
 # Background log scanner
@@ -77,18 +84,31 @@ stop_event = threading.Event()
 
 def background_log_scanner():
     logger.info("Starting background log scanner thread...")
-    # Initial scan of both historical files and access.log
+    # Initial scan of both historical files, access.log, and expired data cleanup
     try:
         collector.sync_all()
     except Exception as e:
         logger.error(f"Error during initial sync: {e}")
 
     interval = max(3, config["logs"].get("scan_interval_seconds", 10))
+    last_cleanup_time = time.time()
+    CLEANUP_INTERVAL_SECONDS = 86400  # Run log cleanup once every 24 hours
+
     while not stop_event.is_set():
         try:
             collector.sync_access_log()
         except Exception as e:
             logger.error(f"Error during periodic access.log sync: {e}")
+
+        # Check daily cleanup of expired logs (> retention_days)
+        now = time.time()
+        if now - last_cleanup_time >= CLEANUP_INTERVAL_SECONDS:
+            try:
+                collector.clean_expired_logs()
+                last_cleanup_time = now
+            except Exception as e:
+                logger.error(f"Error during periodic log cleanup: {e}")
+
         stop_event.wait(interval)
 
 @asynccontextmanager

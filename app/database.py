@@ -216,6 +216,42 @@ class Database:
                 conn.rollback()
                 raise
 
+    def clean_expired_logs(self, retention_days: int) -> int:
+        """
+        Delete access logs older than retention_days (e.g. 180 days / ~6 months).
+        Returns the number of deleted rows.
+        """
+        if retention_days <= 0:
+            return 0
+
+        from datetime import datetime, timedelta
+        cutoff_date = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d")
+
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS count FROM access_logs WHERE date < ?", (cutoff_date,)
+                ).fetchone()
+                count = row["count"] if row else 0
+
+                if count > 0:
+                    conn.execute("DELETE FROM access_logs WHERE date < ?", (cutoff_date,))
+                    conn.commit()
+                    try:
+                        conn.execute("PRAGMA optimize")
+                    except Exception:
+                        pass
+                    logger.info(
+                        "Cleaned up %d expired logs older than %s (retention: %d days)",
+                        count, cutoff_date, retention_days
+                    )
+                return count
+            except Exception as e:
+                conn.rollback()
+                logger.error("Failed to clean expired logs: %s", e)
+                return 0
+
     def get_overview_stats(self, date: Optional[str] = None) -> Dict[str, Any]:
         """
         Get KPI overview metrics and charts data.

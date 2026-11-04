@@ -34,10 +34,12 @@ fi
 SAVED_LOG_DIR=""
 SAVED_PORT=""
 SAVED_PASS=""
+SAVED_RETENTION=""
 if [ -f .env ]; then
     SAVED_LOG_DIR=$(grep -E '^HOST_LOG_DIR=' .env | cut -d= -f2- || true)
     SAVED_PORT=$(grep -E '^PORT=' .env | cut -d= -f2- || true)
     SAVED_PASS=$(grep -E '^ADMIN_PASSWORD=' .env | cut -d= -f2- || true)
+    SAVED_RETENTION=$(grep -E '^RETENTION_DAYS=' .env | cut -d= -f2- || true)
 fi
 
 # 3. 配置 V2Ray 日志目录（默认 /var/log/v2ray/）
@@ -84,6 +86,7 @@ DB_PATH=/data/v2ray_stats.db
 ADMIN_USER=admin
 ADMIN_PASSWORD=$ADMIN_PASSWORD
 HOST_LOG_DIR=$LOG_PATH
+RETENTION_DAYS=${SAVED_RETENTION:-180}
 EOF
 
 cat <<EOF > docker-compose.yml
@@ -110,6 +113,7 @@ services:
       - DB_PATH=/data/v2ray_stats.db
       - ADMIN_USER=admin
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - RETENTION_DAYS=${SAVED_RETENTION:-180}
 EOF
 
 # 8. 核心优化：自动检查、停止并删除旧容器，清理旧镜像

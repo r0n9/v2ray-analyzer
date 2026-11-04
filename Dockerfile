@@ -20,7 +20,8 @@ ENV PORT=8848 \
     ACCESS_LOG_PATH=/logs/access.log \
     DB_PATH=/data/v2ray_stats.db \
     ADMIN_USER=admin \
-    ADMIN_PASSWORD=changeme888
+    ADMIN_PASSWORD=changeme888 \
+    RETENTION_DAYS=180
 
 EXPOSE 8848
 

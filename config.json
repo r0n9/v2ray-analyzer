@@ -10,7 +10,8 @@
     "log_dir": ".",
     "access_log_path": "./access.log",
     "scan_interval_seconds": 10,
-    "history_pattern": "*.log"
+    "history_pattern": "*.log",
+    "retention_days": 180
   },
   "database": {
     "db_path": "./v2ray_stats.db"

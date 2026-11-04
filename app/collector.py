@@ -1,6 +1,7 @@
 import glob
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from .database import Database
 from .parser import LogParser
@@ -9,21 +10,32 @@ logger = logging.getLogger("v2ray_analyzer.collector")
 
 
 class LogCollector:
-    def __init__(self, db: Database, log_dir: str, access_log_path: str):
+    def __init__(self, db: Database, log_dir: str, access_log_path: str, retention_days: int = 180):
         self.db = db
         self.log_dir = os.path.abspath(log_dir)
         self.access_log_path = os.path.abspath(access_log_path)
         self.batch_size = 5000
+        self.retention_days = retention_days
+
+    def clean_expired_logs(self) -> int:
+        """
+        Delete access logs older than retention_days.
+        """
+        if self.retention_days <= 0:
+            return 0
+        return self.db.clean_expired_logs(self.retention_days)
 
     def sync_all(self) -> Dict[str, Any]:
         """
-        Run both historical files sync and access.log tailing.
+        Run historical files sync, access.log tailing, and expired data cleanup.
         """
+        cleaned = self.clean_expired_logs()
         imported_history = self.import_historical_logs()
         new_access_lines = self.sync_access_log()
         return {
             "history_lines_imported": imported_history,
             "access_lines_imported": new_access_lines,
+            "expired_lines_cleaned": cleaned,
         }
 
     def import_historical_logs(self) -> int:
@@ -33,16 +45,30 @@ class LogCollector:
         - Entire file imported inside a single transaction (reduces fsync count from N to 1)
         - Float mtime comparison with tolerance (avoids spurious re-imports)
         - Direct raw tuple passing (avoids allocating dictionary per line)
+        - Skips log files older than retention policy
         """
         total_imported = 0
         pattern = os.path.join(self.log_dir, "*.log")
         files = sorted(glob.glob(pattern))
+
+        cutoff_date = ""
+        if self.retention_days > 0:
+            cutoff_date = (datetime.now() - timedelta(days=self.retention_days)).strftime("%Y-%m-%d")
 
         for file_path in files:
             basename = os.path.basename(file_path)
             # Skip access.log and error.log in historical sweep
             if basename in ("access.log", "error.log"):
                 continue
+
+            # If filename corresponds to a date (e.g. 2026_01_01.log), skip if older than retention cutoff
+            if cutoff_date:
+                name_clean = basename.replace("_", "-").split(".")[0]
+                parts = name_clean.split("-")
+                if len(parts) == 3 and len(parts[0]) == 4 and parts[0].isdigit():
+                    file_date = f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                    if file_date < cutoff_date:
+                        continue
 
             try:
                 stat = os.stat(file_path)

@@ -125,4 +125,20 @@ def create_api_router(db: Database, collector: LogCollector, geo: GeoResolver, c
         result = collector.sync_all()
         return {"status": "success", "result": result}
 
+    @router.get("/logs/retention")
+    def get_retention_info(_auth=Depends(verify_auth)):
+        return {
+            "retention_days": collector.retention_days,
+            "retention_months": round(collector.retention_days / 30, 1),
+        }
+
+    @router.post("/logs/clean-expired")
+    def clean_expired_logs(_auth=Depends(verify_auth)):
+        deleted = collector.clean_expired_logs()
+        return {
+            "status": "success",
+            "deleted_count": deleted,
+            "retention_days": collector.retention_days,
+        }
+
     return router
