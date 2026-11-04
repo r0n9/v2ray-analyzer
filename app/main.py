@@ -65,7 +65,7 @@ if os.environ.get("PORT"):
 
 # Initialize singletons
 db = Database(config["database"]["db_path"])
-geo = GeoResolver(config["database"]["db_path"])
+geo = GeoResolver(db)
 collector = LogCollector(
     db=db,
     log_dir=config["logs"]["log_dir"],

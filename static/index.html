@@ -250,8 +250,6 @@
           </div>
         </div>
       </div>
-
-      <!-- TAB 2: 客户端 IP 专项统计中心 (IP Analytics) -->
       <div v-show="activeTab === 'ips'" class="space-y-6">
         <div class="glass-card rounded-2xl p-6">
           <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -260,7 +258,7 @@
               <p class="text-xs text-slate-400 mt-1">自动识别各客户端 IP 归属地，支持自定义标签别名与深度行为穿透分析</p>
             </div>
             <div class="text-xs text-slate-400">
-              共发现 <span class="text-indigo-400 font-semibold">{{ ipList.length }}</span> 个连接客户端 IP
+              共发现 <span class="text-indigo-400 font-semibold">{{ ipTotal }}</span> 个连接客户端 IP
             </div>
           </div>
 
@@ -319,6 +317,28 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <!-- IP List Pagination -->
+          <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-800 text-xs text-slate-400">
+            <div>
+              共 <span class="text-indigo-400 font-semibold">{{ ipTotal }}</span> 个客户端 IP，第 {{ ipPage }} / {{ Math.ceil(ipTotal / 50) || 1 }} 页
+            </div>
+            <div class="flex items-center space-x-2">
+              <button 
+                :disabled="ipPage <= 1" 
+                @click="fetchIps(ipPage - 1)" 
+                class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                ← 上一页
+              </button>
+              <span class="px-3 py-1.5 bg-indigo-600/20 text-indigo-400 rounded-lg font-semibold border border-indigo-500/20">{{ ipPage }}</span>
+              <button 
+                :disabled="ipPage >= Math.ceil(ipTotal / 50)" 
+                @click="fetchIps(ipPage + 1)" 
+                class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                下一页 →
+              </button>
+            </div>
           </div>
         </div>
       </div>

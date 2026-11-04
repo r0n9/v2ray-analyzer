@@ -22,6 +22,8 @@ createApp({
 
     // IP List state
     const ipList = ref([]);
+    const ipTotal = ref(0);
+    const ipPage = ref(1);
     const currentIpDetail = ref(null);
     const editingAlias = ref(null);
 
@@ -240,16 +242,17 @@ createApp({
       }
     };
 
-    // Fetch IP List
-    const fetchIps = async () => {
+    // Fetch IP List (paginated)
+    const fetchIps = async (page = 1) => {
+      ipPage.value = page;
       try {
-        const url = selectedDate.value
-          ? `/api/stats/ips?date=${selectedDate.value}`
-          : '/api/stats/ips';
-        const res = await fetch(url);
+        const params = new URLSearchParams({ page: page.toString(), page_size: '50' });
+        if (selectedDate.value) params.append('date', selectedDate.value);
+        const res = await fetch(`/api/stats/ips?${params.toString()}`);
         if (!res.ok) throw new Error('Failed to fetch IPs');
         const data = await res.json();
         ipList.value = data.ips || [];
+        ipTotal.value = data.total || 0;
       } catch (err) {
         console.error('Error fetching IPs:', err);
       }
@@ -389,7 +392,7 @@ createApp({
         const res = await fetch('/api/sync', { method: 'POST' });
         if (res.ok) {
           await fetchOverview();
-          await fetchIps();
+          await fetchIps(1);
           if (activeTab.value === 'logs') {
             await searchLogs(1);
           }
@@ -403,7 +406,7 @@ createApp({
 
     const onDateChange = () => {
       fetchOverview();
-      fetchIps();
+      fetchIps(1);
       if (logFilters.value.date === '') {
         // optionally align
       }
@@ -418,7 +421,7 @@ createApp({
           if (targetIpChart) targetIpChart.resize();
         });
       } else if (tab === 'ips') {
-        fetchIps();
+        fetchIps(1);
       } else if (tab === 'logs' && logResults.value.length === 0) {
         searchLogs(1);
       }
@@ -426,7 +429,7 @@ createApp({
 
     onMounted(async () => {
       await fetchOverview();
-      await fetchIps();
+      await fetchIps(1);
 
       window.addEventListener('resize', () => {
         if (hourlyChart) hourlyChart.resize();
@@ -450,6 +453,8 @@ createApp({
       syncing,
       overview,
       ipList,
+      ipTotal,
+      ipPage,
       currentIpDetail,
       editingAlias,
       logFilters,

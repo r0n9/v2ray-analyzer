@@ -4,36 +4,41 @@ import logging
 import os
 import sqlite3
 import threading
-import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger("v2ray_analyzer.geo")
+
 
 class GeoResolver:
     """
     Lightweight IP Geolocation resolver with local SQLite caching
     and non-blocking background query capability.
+
+    Optimized:
+    - Accepts a Database instance to reuse connection management
+    - Uses a bounded ThreadPoolExecutor instead of unlimited Thread spawning
+    - In-memory cache for aliases to reduce DB reads in hot loops
     """
 
-    def __init__(self, db_path: str):
-        self.db_path = os.path.abspath(db_path)
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+    def __init__(self, db):
+        """
+        Args:
+            db: a Database instance whose get_connection() returns a thread-local
+                persistent SQLite connection with WAL/PRAGMA already configured.
+        """
+        self.db = db
         self._lock = threading.Lock()
+        # Bounded thread pool for background IP resolution (max 3 concurrent)
+        self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="geo")
+        # In-flight set to avoid submitting duplicate resolution tasks
+        self._pending: set = set()
+        self._pending_lock = threading.Lock()
         self._init_table()
 
     def _get_connection(self):
-        conn = sqlite3.connect(self.db_path, timeout=60.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        for pragma in [
-            "PRAGMA journal_mode = WAL",
-            "PRAGMA synchronous = NORMAL",
-            "PRAGMA temp_store = MEMORY",
-        ]:
-            try:
-                conn.execute(pragma)
-            except Exception:
-                pass
-        return conn
+        """Reuse the Database's per-thread connection pool."""
+        return self.db.get_connection()
 
     def _init_table(self):
         with self._lock:
@@ -59,8 +64,9 @@ class GeoResolver:
                 )
                 """)
                 conn.commit()
-            finally:
-                conn.close()
+            except Exception:
+                conn.rollback()
+                raise
 
     @staticmethod
     def is_private_ip(ip: str) -> bool:
@@ -82,48 +88,122 @@ class GeoResolver:
                 "alias": self.get_alias(ip) or ""
             }
 
-        with self._get_connection() as conn:
-            row = conn.execute("SELECT * FROM ip_geo_cache WHERE ip = ?", (ip,)).fetchone()
-            alias = self.get_alias(ip) or ""
+        conn = self._get_connection()
+        row = conn.execute("SELECT * FROM ip_geo_cache WHERE ip = ?", (ip,)).fetchone()
+        alias = self.get_alias(ip) or ""
 
-            if row:
-                loc = row["display_location"] or f"{row['region']} {row['city']}".strip() or row["country"] or "未知"
-                return {
-                    "ip": ip,
-                    "location": loc,
-                    "isp": row["isp"] or "",
-                    "alias": alias
-                }
+        if row:
+            loc = row["display_location"] or f"{row['region']} {row['city']}".strip() or row["country"] or "未知"
+            return {
+                "ip": ip,
+                "location": loc,
+                "isp": row["isp"] or "",
+                "alias": alias
+            }
 
-        # If not cached, launch background task to resolve
-        threading.Thread(target=self._resolve_ip_background, args=(ip,), daemon=True).start()
+        # If not cached, submit to bounded thread pool (deduplicated)
+        with self._pending_lock:
+            if ip not in self._pending:
+                self._pending.add(ip)
+                self._executor.submit(self._resolve_ip_background, ip)
+
         return {
             "ip": ip,
             "location": "解析中...",
             "isp": "",
-            "alias": self.get_alias(ip) or ""
+            "alias": alias
         }
 
+    def get_ip_info_batch(self, ips: list) -> Dict[str, Dict[str, str]]:
+        """
+        Batch lookup for multiple IPs — single DB query for geo cache + aliases,
+        much more efficient than calling get_ip_info() in a loop.
+        """
+        if not ips:
+            return {}
+
+        conn = self._get_connection()
+        result: Dict[str, Dict[str, str]] = {}
+        unique_ips = list(set(ips))
+
+        # Batch fetch geo cache
+        placeholders = ",".join("?" * len(unique_ips))
+        geo_rows = conn.execute(
+            f"SELECT * FROM ip_geo_cache WHERE ip IN ({placeholders})", unique_ips
+        ).fetchall()
+        geo_map = {r["ip"]: r for r in geo_rows}
+
+        # Batch fetch aliases
+        alias_rows = conn.execute(
+            f"SELECT ip, alias FROM client_aliases WHERE ip IN ({placeholders})", unique_ips
+        ).fetchall()
+        alias_map = {r["ip"]: r["alias"] for r in alias_rows if r["alias"]}
+
+        for ip in unique_ips:
+            if self.is_private_ip(ip):
+                result[ip] = {
+                    "ip": ip,
+                    "location": "局域网/私有IP",
+                    "isp": "内部网络",
+                    "alias": alias_map.get(ip, "")
+                }
+                continue
+
+            alias = alias_map.get(ip, "")
+            geo = geo_map.get(ip)
+            if geo:
+                loc = geo["display_location"] or f"{geo['region']} {geo['city']}".strip() or geo["country"] or "未知"
+                result[ip] = {
+                    "ip": ip,
+                    "location": loc,
+                    "isp": geo["isp"] or "",
+                    "alias": alias
+                }
+            else:
+                # Submit background resolution (deduplicated)
+                with self._pending_lock:
+                    if ip not in self._pending:
+                        self._pending.add(ip)
+                        self._executor.submit(self._resolve_ip_background, ip)
+                result[ip] = {
+                    "ip": ip,
+                    "location": "解析中...",
+                    "isp": "",
+                    "alias": alias
+                }
+
+        return result
+
     def _resolve_ip_background(self, ip: str):
-        with self._lock:
+        try:
+            conn = self._get_connection()
             # Double check cache
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT ip FROM ip_geo_cache WHERE ip = ?", (ip,)).fetchone()
-                if row:
-                    return
+            row = conn.execute("SELECT ip FROM ip_geo_cache WHERE ip = ?", (ip,)).fetchone()
+            if row:
+                return
 
             location, isp, country, region, city = self._fetch_ip_info(ip)
-            with self._get_connection() as conn:
-                conn.execute("""
-                INSERT OR REPLACE INTO ip_geo_cache (ip, country, region, city, isp, display_location, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, (ip, country, region, city, isp, location))
-                conn.commit()
+            with self._lock:
+                conn = self._get_connection()
+                try:
+                    conn.execute("""
+                    INSERT OR REPLACE INTO ip_geo_cache (ip, country, region, city, isp, display_location, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    """, (ip, country, region, city, isp, location))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+        finally:
+            with self._pending_lock:
+                self._pending.discard(ip)
 
     def _fetch_ip_info(self, ip: str) -> Tuple[str, str, str, str, str]:
         """
         Fetch IP info from free public API with fallback.
         """
+        import urllib.request
+
         # Primary: pconline (Very accurate for China IPs)
         try:
             url = f"https://whois.pconline.com.cn/ipJson.jsp?ip={ip}&json=true"
@@ -141,7 +221,7 @@ class GeoResolver:
                             isp = parts[-1].lstrip("/")
                     elif addr:
                         isp = addr.lstrip("/")
-                    
+
                     # Clean up duplicate names (e.g. 上海市 上海市)
                     if region and city:
                         if region == city:
@@ -177,21 +257,21 @@ class GeoResolver:
         return "未知位置", "", "", "", ""
 
     def get_alias(self, ip: str) -> Optional[str]:
-        with self._get_connection() as conn:
-            row = conn.execute("SELECT alias FROM client_aliases WHERE ip = ?", (ip,)).fetchone()
-            if row and row["alias"]:
-                return row["alias"]
+        conn = self._get_connection()
+        row = conn.execute("SELECT alias FROM client_aliases WHERE ip = ?", (ip,)).fetchone()
+        if row and row["alias"]:
+            return row["alias"]
         return None
 
     def set_alias(self, ip: str, alias: str, note: str = ""):
-        with self._get_connection() as conn:
-            conn.execute("""
-            INSERT OR REPLACE INTO client_aliases (ip, alias, note, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """, (ip, alias, note))
-            conn.commit()
+        conn = self._get_connection()
+        conn.execute("""
+        INSERT OR REPLACE INTO client_aliases (ip, alias, note, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        """, (ip, alias, note))
+        conn.commit()
 
     def get_all_aliases(self) -> Dict[str, Dict[str, str]]:
-        with self._get_connection() as conn:
-            rows = conn.execute("SELECT ip, alias, note FROM client_aliases").fetchall()
-            return {r["ip"]: {"alias": r["alias"], "note": r["note"]} for r in rows}
+        conn = self._get_connection()
+        rows = conn.execute("SELECT ip, alias, note FROM client_aliases").fetchall()
+        return {r["ip"]: {"alias": r["alias"], "note": r["note"]} for r in rows}

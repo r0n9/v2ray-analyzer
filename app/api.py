@@ -48,23 +48,36 @@ def create_api_router(db: Database, collector: LogCollector, geo: GeoResolver, c
     @router.get("/stats/overview")
     def get_overview(date: Optional[str] = Query(None), _auth=Depends(verify_auth)):
         stats = db.get_overview_stats(date)
-        # Enrich top IPs with geo & alias
-        for item in stats.get("top_ips", []):
-            info = geo.get_ip_info(item["ip"])
-            item["location"] = info["location"]
-            item["isp"] = info["isp"]
-            item["alias"] = info["alias"]
+        # Enrich top IPs with geo & alias — use batch lookup
+        top_ips = stats.get("top_ips", [])
+        if top_ips:
+            ip_list = [item["ip"] for item in top_ips]
+            geo_batch = geo.get_ip_info_batch(ip_list)
+            for item in top_ips:
+                info = geo_batch.get(item["ip"], {})
+                item["location"] = info.get("location", "")
+                item["isp"] = info.get("isp", "")
+                item["alias"] = info.get("alias", "")
         return stats
 
     @router.get("/stats/ips")
-    def get_all_ips(date: Optional[str] = Query(None), _auth=Depends(verify_auth)):
-        ips = db.get_all_ips_stats(date)
-        for item in ips:
-            info = geo.get_ip_info(item["client_ip"])
-            item["location"] = info["location"]
-            item["isp"] = info["isp"]
-            item["alias"] = info["alias"]
-        return {"ips": ips}
+    def get_all_ips(
+        date: Optional[str] = Query(None),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(50, ge=10, le=200),
+        _auth=Depends(verify_auth),
+    ):
+        ips, total = db.get_all_ips_stats(date, page=page, page_size=page_size)
+        # Batch geo lookup instead of per-IP loop
+        if ips:
+            ip_list = [item["client_ip"] for item in ips]
+            geo_batch = geo.get_ip_info_batch(ip_list)
+            for item in ips:
+                info = geo_batch.get(item["client_ip"], {})
+                item["location"] = info.get("location", "")
+                item["isp"] = info.get("isp", "")
+                item["alias"] = info.get("alias", "")
+        return {"ips": ips, "total": total, "page": page, "page_size": page_size}
 
     @router.get("/stats/ip/{client_ip}")
     def get_ip_detail(client_ip: str, date: Optional[str] = Query(None), _auth=Depends(verify_auth)):
