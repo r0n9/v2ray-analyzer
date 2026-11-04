@@ -2,6 +2,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("v2ray_analyzer.database")
@@ -23,8 +24,18 @@ class Database:
         self._lock = threading.Lock()
         # Thread-local storage for persistent connections (avoids re-creating per call)
         self._local = threading.local()
+        # Monotonic data version for lightweight frontend polling (O(1) memory lookup)
+        self._data_version: int = int(time.time() * 1000)
         self._init_db()
         logger.info("Database initialized OK: %s", self.db_path)
+
+    def bump_data_version(self):
+        """Monotonically increment the in-memory data version whenever data changes."""
+        self._data_version += 1
+
+    def get_data_version(self) -> int:
+        """Return the current in-memory data version (ultra-lightweight O(1) read)."""
+        return self._data_version
 
     def get_connection(self) -> sqlite3.Connection:
         """Return a persistent per-thread connection. PRAGMA is executed only once
@@ -67,6 +78,7 @@ class Database:
             conn = self.get_connection()
             try:
                 conn.commit()
+                self.bump_data_version()
             except Exception as e:
                 logger.debug("Commit failed or no open transaction: %s", e)
 
@@ -188,6 +200,7 @@ class Database:
                 """, data)
                 if commit:
                     conn.commit()
+                    self.bump_data_version()
             except Exception:
                 conn.rollback()
                 raise
@@ -238,6 +251,7 @@ class Database:
                 if count > 0:
                     conn.execute("DELETE FROM access_logs WHERE date < ?", (cutoff_date,))
                     conn.commit()
+                    self.bump_data_version()
                     try:
                         conn.execute("PRAGMA optimize")
                     except Exception:

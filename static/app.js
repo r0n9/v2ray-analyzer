@@ -6,6 +6,7 @@ createApp({
     const selectedDate = ref('');
     const availableDates = ref([]);
     const syncing = ref(false);
+    const lastDataVersion = ref(null);
 
     // Overview state
     const overview = ref({
@@ -55,6 +56,9 @@ createApp({
         if (!res.ok) throw new Error('Failed to load overview data');
         const data = await res.json();
         overview.value = data;
+        if (data.version) {
+          lastDataVersion.value = data.version;
+        }
         if (!selectedDate.value && data.date) {
           selectedDate.value = data.date;
         }
@@ -438,10 +442,29 @@ createApp({
         if (ipHourlyChart) ipHourlyChart.resize();
       });
 
-      // Poll every 15s to keep overview up to date
-      setInterval(() => {
-        if (activeTab.value === 'overview' && !syncing.value) {
-          fetchOverview();
+      // Smart polling: check lightweight version (O(1) memory check) every 15s
+      // Only pull heavy overview SQL analytics when data version actually changed
+      setInterval(async () => {
+        if (syncing.value) return;
+        if (activeTab.value !== 'overview' && activeTab.value !== 'ips') return;
+
+        try {
+          const res = await fetch('/api/stats/version');
+          if (!res.ok) return;
+          const { version } = await res.json();
+
+          if (lastDataVersion.value !== null && version !== lastDataVersion.value) {
+            lastDataVersion.value = version;
+            if (activeTab.value === 'overview') {
+              await fetchOverview();
+            } else if (activeTab.value === 'ips') {
+              await fetchIps(ipPage.value);
+            }
+          } else if (lastDataVersion.value === null) {
+            lastDataVersion.value = version;
+          }
+        } catch (err) {
+          console.debug('Version check skipped:', err);
         }
       }, 15000);
     });

@@ -45,9 +45,15 @@ def create_api_router(db: Database, collector: LogCollector, geo: GeoResolver, c
     def get_auth_status():
         return {"auth_enabled": auth_enabled}
 
+    @router.get("/stats/version")
+    def get_stats_version(_auth=Depends(verify_auth)):
+        """Ultra-lightweight O(1) in-memory version check for frontend polling."""
+        return {"version": db.get_data_version()}
+
     @router.get("/stats/overview")
     def get_overview(date: Optional[str] = Query(None), _auth=Depends(verify_auth)):
         stats = db.get_overview_stats(date)
+        stats["version"] = db.get_data_version()
         # Enrich top IPs with geo & alias — use batch lookup
         top_ips = stats.get("top_ips", [])
         if top_ips:
@@ -91,6 +97,7 @@ def create_api_router(db: Database, collector: LogCollector, geo: GeoResolver, c
     @router.post("/alias")
     def update_alias(req: AliasRequest, _auth=Depends(verify_auth)):
         geo.set_alias(req.ip, req.alias, req.note or "")
+        db.bump_data_version()
         return {"status": "success", "ip": req.ip, "alias": req.alias}
 
     @router.get("/logs")
