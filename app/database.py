@@ -143,6 +143,15 @@ class Database:
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS client_aliases (
+                    ip TEXT PRIMARY KEY,
+                    alias TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -535,6 +544,7 @@ class Database:
         page: int = 1,
         page_size: int = 50,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        conn = self.get_connection()
         conditions = []
         params = []
 
@@ -542,8 +552,26 @@ class Database:
             conditions.append("date = ?")
             params.append(date)
         if client_ip:
-            conditions.append("client_ip = ?")
-            params.append(client_ip.strip())
+            cip = client_ip.strip()
+            # Support searching by exact IP or matching alias / note
+            matched_ips = []
+            try:
+                alias_rows = conn.execute(
+                    "SELECT ip FROM client_aliases WHERE alias = ? OR note = ?", (cip, cip)
+                ).fetchall()
+                matched_ips = [r["ip"] for r in alias_rows]
+            except Exception:
+                pass
+
+            if matched_ips:
+                ips_to_search = list(set([cip] + matched_ips))
+                ph = ",".join("?" * len(ips_to_search))
+                conditions.append(f"client_ip IN ({ph})")
+                params.extend(ips_to_search)
+            else:
+                conditions.append("client_ip = ?")
+                params.append(cip)
+
         if target_host:
             th = target_host.strip()
             if "%" in th or "*" in th:
@@ -560,8 +588,6 @@ class Database:
             params.append(network.lower().strip())
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-
-        conn = self.get_connection()
 
         # Count total: O(1) estimate on empty filter vs filtered COUNT(*)
         if not conditions:
@@ -581,4 +607,30 @@ class Database:
         LIMIT ? OFFSET ?
         """
         rows = conn.execute(data_query, params + [page_size, offset]).fetchall()
-        return [dict(r) for r in rows], total
+        result_logs = [dict(r) for r in rows]
+
+        # Enrich logs with client alias if any
+        if result_logs:
+            unique_ips = list({r["client_ip"] for r in result_logs if r.get("client_ip")})
+            if unique_ips:
+                placeholders = ",".join("?" * len(unique_ips))
+                try:
+                    alias_rows = conn.execute(
+                        f"SELECT ip, alias, note FROM client_aliases WHERE ip IN ({placeholders})",
+                        unique_ips,
+                    ).fetchall()
+                    alias_map = {r["ip"]: (r["alias"] or r["note"] or "") for r in alias_rows}
+                    for r in result_logs:
+                        alias_val = alias_map.get(r["client_ip"], "")
+                        r["client_alias"] = alias_val
+                        r["alias"] = alias_val
+                except Exception:
+                    for r in result_logs:
+                        r["client_alias"] = ""
+                        r["alias"] = ""
+            else:
+                for r in result_logs:
+                    r["client_alias"] = ""
+                    r["alias"] = ""
+
+        return result_logs, total

@@ -135,9 +135,9 @@ class GeoResolver:
 
         # Batch fetch aliases
         alias_rows = conn.execute(
-            f"SELECT ip, alias FROM client_aliases WHERE ip IN ({placeholders})", unique_ips
+            f"SELECT ip, alias, note FROM client_aliases WHERE ip IN ({placeholders})", unique_ips
         ).fetchall()
-        alias_map = {r["ip"]: r["alias"] for r in alias_rows if r["alias"]}
+        alias_map = {r["ip"]: (r["alias"] or r["note"] or "") for r in alias_rows if (r["alias"] or r["note"])}
 
         for ip in unique_ips:
             if self.is_private_ip(ip):
@@ -258,9 +258,11 @@ class GeoResolver:
 
     def get_alias(self, ip: str) -> Optional[str]:
         conn = self._get_connection()
-        row = conn.execute("SELECT alias FROM client_aliases WHERE ip = ?", (ip,)).fetchone()
-        if row and row["alias"]:
-            return row["alias"]
+        row = conn.execute("SELECT alias, note FROM client_aliases WHERE ip = ?", (ip,)).fetchone()
+        if row:
+            val = row["alias"] or row["note"]
+            if val:
+                return val
         return None
 
     def set_alias(self, ip: str, alias: str, note: str = ""):

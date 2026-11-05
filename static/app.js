@@ -392,6 +392,15 @@ createApp({
           if (currentIpDetail.value && currentIpDetail.value.client_ip === editingAlias.value.ip) {
             currentIpDetail.value.alias = editingAlias.value.alias;
           }
+
+          if (logResults.value && logResults.value.length > 0) {
+            logResults.value.forEach((l) => {
+              if (l.client_ip === editingAlias.value.ip) {
+                l.client_alias = editingAlias.value.alias;
+                l.alias = editingAlias.value.alias;
+              }
+            });
+          }
           editingAlias.value = null;
         }
       } catch (err) {
