@@ -43,6 +43,7 @@ createApp({
     const logResults = ref([]);
     const logTotal = ref(0);
     const logPage = ref(1);
+    const searchingLogs = ref(false);
 
     // Chart instances
     let hourlyChart = null;
@@ -410,6 +411,8 @@ createApp({
 
     // Logs Search
     const searchLogs = async (page = 1) => {
+      if (searchingLogs.value) return;
+      searchingLogs.value = true;
       logPage.value = page;
       const params = new URLSearchParams({
         page: page.toString(),
@@ -429,6 +432,8 @@ createApp({
         logTotal.value = data.total || 0;
       } catch (err) {
         console.error('Error searching logs:', err);
+      } finally {
+        searchingLogs.value = false;
       }
     };
 
@@ -546,6 +551,7 @@ createApp({
       openAliasModal,
       saveAlias,
       searchLogs,
+      searchingLogs,
       triggerManualSync,
     };
   },

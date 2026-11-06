@@ -393,19 +393,26 @@
             </div>
             <div>
               <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">目标端口</label>
-              <input v-model.number="logFilters.target_port" placeholder="如 443" type="number" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
+              <input v-model.number="logFilters.target_port" @keyup.enter="searchLogs(1)" placeholder="如 443" type="number" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
             <div class="col-span-2 md:col-span-1">
               <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">客户端 IP</label>
-              <input v-model="logFilters.client_ip" placeholder="如 116.237... 或设备别名" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
+              <input v-model="logFilters.client_ip" @keyup.enter="searchLogs(1)" placeholder="如 116.237... 或设备别名" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
             <div class="col-span-2 md:col-span-1">
               <label class="block text-[11px] sm:text-xs font-medium text-slate-400 mb-1">目标域名/IP</label>
-              <input v-model="logFilters.target_host" placeholder="如 google.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
+              <input v-model="logFilters.target_host" @keyup.enter="searchLogs(1)" placeholder="如 google.com" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-xs sm:text-sm px-2.5 py-2 text-slate-200" />
             </div>
             <div class="col-span-2 md:col-span-1 flex items-end">
-              <button @click="searchLogs(1)" class="w-full bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-medium py-2 rounded-lg text-xs sm:text-sm transition-all shadow-md">
-                🔍 搜索日志
+              <button 
+                :disabled="searchingLogs"
+                @click="searchLogs(1)" 
+                class="w-full bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-medium py-2 rounded-lg text-xs sm:text-sm transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center justify-center space-x-1.5">
+                <svg v-if="searchingLogs" class="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>{{ searchingLogs ? '检索中...' : '🔍 搜索日志' }}</span>
               </button>
             </div>
           </div>
@@ -451,7 +458,18 @@
                     <span :class="log.status === 'accepted' ? 'text-emerald-400' : 'text-rose-400'">{{ log.status }}</span>
                   </td>
                 </tr>
-                <tr v-if="logResults.length === 0">
+                <tr v-if="searchingLogs">
+                  <td colspan="7" class="py-12 text-center text-slate-400">
+                    <div class="inline-flex items-center space-x-2 text-indigo-400">
+                      <svg class="animate-spin w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span class="text-xs sm:text-sm">正在检索日志，请稍候...</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-else-if="logResults.length === 0">
                   <td colspan="7" class="py-8 text-center text-slate-500">未找到匹配的日志记录</td>
                 </tr>
               </tbody>
@@ -462,8 +480,8 @@
           <div class="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 text-xs text-slate-400">
             <div>共 {{ logTotal.toLocaleString() }} 条记录，第 {{ logPage }} / {{ Math.ceil(logTotal / 50) || 1 }} 页</div>
             <div class="flex space-x-2">
-              <button :disabled="logPage <= 1" @click="searchLogs(logPage - 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40">上一页</button>
-              <button :disabled="logPage >= Math.ceil(logTotal / 50)" @click="searchLogs(logPage + 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40">下一页</button>
+              <button :disabled="logPage <= 1 || searchingLogs" @click="searchLogs(logPage - 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed">上一页</button>
+              <button :disabled="logPage >= Math.ceil(logTotal / 50) || searchingLogs" @click="searchLogs(logPage + 1)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed">下一页</button>
             </div>
           </div>
         </div>
