@@ -107,6 +107,7 @@ services:
       # V2Ray 日志目录（只读挂载）
       - ${LOG_PATH}:/logs:ro
       - ./data:/data
+      - ./static:/app/static:ro
     environment:
       - PORT=8848
       - LOG_DIR=/logs

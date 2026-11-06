@@ -14,6 +14,7 @@ services:
       # 将 VPS 上 V2Ray 日志目录挂载到容器内（只读挂载）
       - ${HOST_LOG_DIR:-/var/log/v2ray}:/logs:ro
       - ./data:/data
+      - ./static:/app/static:ro
     environment:
       - PORT=8848
       - LOG_DIR=/logs
