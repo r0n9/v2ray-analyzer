@@ -11,7 +11,7 @@
   <!-- ECharts -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
-    [v-cloak] { display: none; }
+    [v-cloak] { display: none !important; }
     .glass-card {
       background: rgba(30, 41, 59, 0.7);
       backdrop-filter: blur(12px);
@@ -489,8 +489,9 @@
     </main>
 
     <!-- IP 画像穿透下钻弹窗 (Drill-down Modal) - Mobile Bottom Sheet style -->
-    <div v-if="currentIpDetail" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="glass-card w-full max-w-4xl max-h-[92vh] sm:max-h-[90vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col shadow-2xl border border-slate-700">
+    <template v-if="currentIpDetail">
+      <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div class="glass-card w-full max-w-4xl max-h-[92vh] sm:max-h-[90vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col shadow-2xl border border-slate-700">
         <!-- Modal Header -->
         <div class="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
           <div class="min-w-0 pr-2">
@@ -577,24 +578,27 @@
         </div>
       </div>
     </div>
+  </template>
 
     <!-- Edit Alias Modal -->
-    <div v-if="editingAlias" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="glass-card w-full max-w-md rounded-2xl p-5 sm:p-6 border border-slate-700 space-y-4">
-        <h3 class="text-base sm:text-lg font-bold text-white">设置设备别名备注</h3>
-        <p class="text-xs text-slate-400">为 IP <span class="font-mono text-indigo-400 font-bold">{{ editingAlias.ip }}</span> 设定易于辨认的名字（如：我的手机、家里软路由、公司 Mac 等）</p>
-        
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">设备别名</label>
-          <input v-model="editingAlias.alias" @keyup.enter="saveAlias" placeholder="如：我的手机" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" autofocus />
-        </div>
+    <template v-if="editingAlias">
+      <div class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-card w-full max-w-md rounded-2xl p-5 sm:p-6 border border-slate-700 space-y-4">
+          <h3 class="text-base sm:text-lg font-bold text-white">设置设备别名备注</h3>
+          <p class="text-xs text-slate-400">为 IP <span class="font-mono text-indigo-400 font-bold">{{ editingAlias.ip }}</span> 设定易于辨认的名字（如：我的手机、家里软路由、公司 Mac 等）</p>
+          
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">设备别名</label>
+            <input v-model="editingAlias.alias" autocomplete="off" @keyup.enter="saveAlias" placeholder="如：我的手机" class="w-full bg-slate-900 border border-slate-700 rounded-lg text-sm px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" autofocus />
+          </div>
 
-        <div class="flex justify-end space-x-3 pt-2">
-          <button @click="editingAlias = null" class="px-4 py-2 bg-slate-800 text-slate-300 text-sm rounded-lg hover:bg-slate-700">取消</button>
-          <button @click="saveAlias" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-500">保存设置</button>
+          <div class="flex justify-end space-x-3 pt-2">
+            <button @click="editingAlias = null" class="px-4 py-2 bg-slate-800 text-slate-300 text-sm rounded-lg hover:bg-slate-700">取消</button>
+            <button @click="saveAlias" class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-500">保存设置</button>
+          </div>
         </div>
       </div>
-    </div>
+    </template>
   </div>
 
   <script src="static/app.js"></script>
