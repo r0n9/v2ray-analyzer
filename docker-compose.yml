@@ -22,3 +22,4 @@ services:
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-changeme888}
       - RETENTION_DAYS=${RETENTION_DAYS:-180}
+      - MALLOC_ARENA_MAX=2

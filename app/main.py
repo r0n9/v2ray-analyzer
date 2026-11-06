@@ -1,3 +1,4 @@
+import gc
 import json
 import logging
 import os
@@ -87,6 +88,8 @@ def background_log_scanner():
     # Initial scan of both historical files, access.log, and expired data cleanup
     try:
         collector.sync_all()
+        db.checkpoint()
+        gc.collect()
     except Exception as e:
         logger.error(f"Error during initial sync: {e}")
 
@@ -105,6 +108,8 @@ def background_log_scanner():
         if now - last_cleanup_time >= CLEANUP_INTERVAL_SECONDS:
             try:
                 collector.clean_expired_logs()
+                db.checkpoint()
+                gc.collect()
                 last_cleanup_time = now
             except Exception as e:
                 logger.error(f"Error during periodic log cleanup: {e}")
@@ -113,6 +118,15 @@ def background_log_scanner():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Limit AnyIO worker threads to 4 (default is 40) to prevent excessive DB connection memory
+    try:
+        import anyio.to_thread
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        limiter.total_tokens = 4
+        logger.info("Configured AnyIO thread pool limiter to 4 worker threads")
+    except Exception as e:
+        logger.debug(f"Could not set thread limiter: {e}")
+
     # Start background thread
     scanner_thread = threading.Thread(target=background_log_scanner, daemon=True)
     scanner_thread.start()

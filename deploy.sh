@@ -87,6 +87,7 @@ ADMIN_USER=admin
 ADMIN_PASSWORD=$ADMIN_PASSWORD
 HOST_LOG_DIR=$LOG_PATH
 RETENTION_DAYS=${SAVED_RETENTION:-180}
+MALLOC_ARENA_MAX=2
 EOF
 
 cat <<EOF > docker-compose.yml
@@ -114,6 +115,7 @@ services:
       - ADMIN_USER=admin
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - RETENTION_DAYS=${SAVED_RETENTION:-180}
+      - MALLOC_ARENA_MAX=2
 EOF
 
 # 8. 核心优化：自动检查、停止并删除旧容器，清理旧镜像

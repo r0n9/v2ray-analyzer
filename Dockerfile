@@ -21,7 +21,8 @@ ENV PORT=8848 \
     DB_PATH=/data/v2ray_stats.db \
     ADMIN_USER=admin \
     ADMIN_PASSWORD=changeme888 \
-    RETENTION_DAYS=180
+    RETENTION_DAYS=180 \
+    MALLOC_ARENA_MAX=2
 
 EXPOSE 8848
 

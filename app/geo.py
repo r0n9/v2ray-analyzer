@@ -29,8 +29,8 @@ class GeoResolver:
         """
         self.db = db
         self._lock = threading.Lock()
-        # Bounded thread pool for background IP resolution (max 3 concurrent)
-        self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="geo")
+        # Bounded thread pool for background IP resolution (max 2 concurrent)
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="geo")
         # In-flight set to avoid submitting duplicate resolution tasks
         self._pending: set = set()
         self._pending_lock = threading.Lock()

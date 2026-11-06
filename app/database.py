@@ -58,11 +58,15 @@ class Database:
         conn.row_factory = sqlite3.Row
 
         # Pragmas executed only once per thread connection
+        # cache_size = -2000 (2MB per connection) prevents multi-thread memory ballooning
+        # temp_store = FILE avoids building large sort/grouping tables in RAM
+        # mmap_size = 0 keeps virtual memory strictly bounded
         for pragma in [
             "PRAGMA journal_mode = WAL",
             "PRAGMA synchronous = NORMAL",
-            "PRAGMA temp_store = MEMORY",
-            "PRAGMA cache_size = -64000",
+            "PRAGMA temp_store = FILE",
+            "PRAGMA cache_size = -2000",
+            "PRAGMA mmap_size = 0",
         ]:
             try:
                 conn.execute(pragma)
@@ -264,6 +268,7 @@ class Database:
                     self.bump_data_version()
                     try:
                         conn.execute("PRAGMA optimize")
+                        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                     except Exception:
                         pass
                     logger.info(
@@ -275,6 +280,15 @@ class Database:
                 conn.rollback()
                 logger.error("Failed to clean expired logs: %s", e)
                 return 0
+
+    def checkpoint(self):
+        """Truncate the WAL file and release WAL memory/disk pages."""
+        with self._lock:
+            conn = self.get_connection()
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception as e:
+                logger.debug("WAL checkpoint failed: %s", e)
 
     def get_overview_stats(self, date: Optional[str] = None) -> Dict[str, Any]:
         """
